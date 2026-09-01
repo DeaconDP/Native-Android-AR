@@ -1,0 +1,132 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Android: Wireless Discover + Install",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/android-wireless.ps1",
+        "-Discover"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Android: Wireless Connect + Install",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/android-wireless.ps1",
+        "-ConnectAddress",
+        "${input:connectAddress}"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
+    },
+    {
+      "label": "Android: Wireless Pair + Connect",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/android-wireless.ps1",
+        "-PairAddress",
+        "${input:pairAddress}",
+        "-PairCode",
+        "${input:pairCode}",
+        "-ConnectAddress",
+        "${input:connectAddress}"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
+    },
+    {
+      "label": "Android: Wireless Install only",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/android-wireless.ps1",
+        "-Discover",
+        "-SkipVite"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
+    },
+    {
+      "label": "Android: Wireless Logcat",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/android-wireless.ps1",
+        "-Discover",
+        "-LogcatOnly"
+      ],
+      "problemMatcher": [],
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "pairAddress",
+      "type": "promptString",
+      "description": "Pairing IP:port from phone (Wireless debugging > Pair with pairing code)",
+      "default": "192.168.0.213:"
+    },
+    {
+      "id": "pairCode",
+      "type": "promptString",
+      "description": "6-digit pairing code from the phone"
+    },
+    {
+      "id": "connectAddress",
+      "type": "promptString",
+      "description": "Connect IP:port from Wireless debugging main screen",
+      "default": "192.168.0.213:"
+    }
+  ]
+}

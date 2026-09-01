@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+KEYSTORE="${1:-$HOME/.android/debug.keystore}"
+ALIAS="${2:-androiddebugkey}"
+STOREPASS="${3:-android}"
+KEYPASS="${4:-android}"
+
+if ! command -v keytool >/dev/null 2>&1; then
+  echo "keytool not found. Add a JDK bin directory to PATH." >&2
+  exit 1
+fi
+
+if [[ ! -f "$KEYSTORE" ]]; then
+  echo "Keystore not found: $KEYSTORE" >&2
+  echo "Pass a release keystore path as the first argument." >&2
+  exit 1
+fi
+
+echo "Keystore: $KEYSTORE"
+echo "Alias:    $ALIAS"
+echo
+echo "SHA-256 fingerprint for web/public/.well-known/assetlinks.json:"
+echo
+
+FP="$(
+  keytool -list -v \
+    -keystore "$KEYSTORE" \
+    -alias "$ALIAS" \
+    -storepass "$STOREPASS" \
+    -keypass "$KEYPASS" \
+    | awk -F': ' '/SHA256:/{print $2; exit}'
+)"
+
+if [[ -z "$FP" ]]; then
+  echo "Could not read SHA-256 from keystore." >&2
+  exit 1
+fi
+
+# Normalize spaces (keytool prints colon-separated hex with spaces).
+FP="${FP// /}"
+echo "$FP"
+echo
+echo "Paste that value into sha256_cert_fingerprints, deploy web/dist, then rebuild the APK with:"
+echo "  ./gradlew assembleRelease -PTWA_URL=https://ar.worldbuild.io"
