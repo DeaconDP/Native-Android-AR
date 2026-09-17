@@ -6,6 +6,8 @@ import {
 import { saveSelectedAsset } from "../state/preferences";
 import {
   exitAr,
+  isCapacitorAndroid,
+  isNativeArSupported,
   NativeAr,
   nativeReposition,
   openChromeArHandoff,
@@ -16,6 +18,7 @@ import {
   tryQuickLookAr,
   webModelUrl,
   type ArMode,
+  type NativeArPlacementMode,
 } from "../native/arBridge";
 import { createOrbitViewer, type OrbitViewerHandle } from "./orbit-viewer";
 import { createWebXrViewer, type WebXrViewerHandle } from "./webxr-viewer";
@@ -28,6 +31,8 @@ export interface ArSessionController {
 
 type Runtime = {
   mode: ArMode;
+  nativePlacementMode: NativeArPlacementMode;
+  lightEstimateViz: boolean;
   xrSession: XRSession | null;
   webxr: WebXrViewerHandle | null;
   orbit: OrbitViewerHandle | null;
@@ -68,11 +73,16 @@ async function tearDownRuntime(): Promise<void> {
 export async function initGate(store: AppStateStore): Promise<void> {
   const mode = await prepareArMode();
   const bodies: Record<ArMode, string> = {
-    native: "Mode: native (ARCore / ARKit). Tap How it works to learn the techniques, or Start AR to place.",
-    webxr: "Mode: WebXR. Tap How it works to learn the ladder, or Start AR to place.",
-    quicklook: "Mode: Quick Look. Tap How it works for the ladder, or Start AR to open it.",
-    chrome: "Mode: Chrome handoff. Tap How it works for why, or Start to open WebXR in Chrome.",
-    orbit: "Mode: orbit (no camera AR). Tap How it works for the ladder, or Start for 3D orbit.",
+    native:
+      "Mode: native (ARCore / ARKit) — Cap + real native AR under the glass. How it works covers cross-platform & the ladder.",
+    webxr:
+      "Mode: WebXR in the browser. How it works explains native-first Cap vs this rung — or Start AR to place.",
+    quicklook:
+      "Mode: Quick Look (iOS system AR). How it works covers why this rung exists on the ladder.",
+    chrome:
+      "Mode: Chrome handoff — Cap WebView cannot run WebXR. How it works explains why, or Start to open Chrome.",
+    orbit:
+      "Mode: orbit (no camera AR). How it works covers the full ladder — or Start for 3D orbit.",
   };
   store.patch({
     gateTitle: "Deez-Native AR",
@@ -86,10 +96,36 @@ export async function initGate(store: AppStateStore): Promise<void> {
 async function startSession(
   store: AppStateStore,
   uiRoot: HTMLElement,
+  options?: {
+    nativePlacementMode?: NativeArPlacementMode;
+    lightEstimateViz?: boolean;
+  },
 ): Promise<ArSessionController> {
   const mode = await prepareArMode();
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     .matches;
+  const nativePlacementMode: NativeArPlacementMode =
+    options?.nativePlacementMode ?? "plane";
+  const lightEstimateViz =
+    options?.lightEstimateViz === true && nativePlacementMode === "plane";
+
+  if (nativePlacementMode === "image" && mode !== "native") {
+    throw new Error(
+      "Image-target placement needs the Capacitor Android app with ARCore.",
+    );
+  }
+
+  if (nativePlacementMode === "face" && (!isCapacitorAndroid() || mode !== "native")) {
+    throw new Error(
+      "Face-mesh peek needs the Capacitor Android app with ARCore.",
+    );
+  }
+
+  if (lightEstimateViz && (!isCapacitorAndroid() || mode !== "native")) {
+    throw new Error(
+      "Light-estimate viz needs the Capacitor Android app with ARCore.",
+    );
+  }
 
   if (mode === "quicklook") {
     const ok = await tryQuickLookAr(store.selectedAsset);
@@ -149,6 +185,8 @@ async function startSession(
     const started = await startNativeAr({
       reducedMotion,
       asset: store.selectedAsset,
+      placementMode: nativePlacementMode,
+      lightEstimateViz,
     });
     if (!started.ok) throw new Error(started.error);
 
@@ -210,16 +248,21 @@ async function startSession(
     { webxr, orbit },
     {
       onPlaced: () => store.patch({ placedCount: 1 }),
-      onHint: (hint) => store.patch({ sessionHint: hint }),
+      onHint: (hint, topicId) =>
+        store.patch({ sessionHint: hint, coachTopicId: topicId }),
       onError: (message) => store.patch({ sessionError: message }),
       onExit: () => {
         void endFromOutside(store);
       },
     },
+    nativePlacementMode,
+    lightEstimateViz,
   );
 
   runtime = {
     mode,
+    nativePlacementMode,
+    lightEstimateViz,
     xrSession,
     webxr,
     orbit,
@@ -238,6 +281,7 @@ async function startSession(
         surfaceReady: false,
         sessionHint: null,
         sessionError: null,
+        coachTopicId: null,
         trackingBanner: null,
       });
       await initGate(store);
@@ -260,6 +304,7 @@ async function endFromOutside(store: AppStateStore): Promise<void> {
     surfaceReady: false,
     sessionHint: null,
     sessionError: null,
+    coachTopicId: null,
   });
   await initGate(store);
 }
@@ -332,12 +377,16 @@ export function bindStoreActions(
         }
         break;
       case "open-learn":
-        store.patch({ showLearn: true, learnTopicId: null });
+        store.patch({
+          showLearn: true,
+          learnTopicId:
+            store.phase === "ar" ? store.coachTopicId : null,
+        });
         break;
       case "close-learn": {
-        const inPanel = target.closest("[data-learn-panel]");
-        const isCloseBtn = Boolean(target.closest(".icon-btn"));
-        if (!inPanel || isCloseBtn) {
+        const isBackdrop = actionEl.classList.contains("picker-backdrop");
+        const isButton = actionEl.tagName === "BUTTON";
+        if (isBackdrop || isButton) {
           store.patch({ showLearn: false, learnTopicId: null });
         }
         break;
@@ -350,34 +399,73 @@ export function bindStoreActions(
         store.patch({ showLearn: true, learnTopicId: topicId });
         break;
       }
+      case "try-ar": {
+        const topicId = store.learnTopicId;
+        const markerDemo = topicId === "kind-marker";
+        const lightDemo = topicId === "kind-light";
+        const faceDemo = topicId === "kind-face";
+        if (markerDemo || lightDemo || faceDemo) {
+          const androidNative =
+            isCapacitorAndroid() && (await isNativeArSupported());
+          if (!androidNative) {
+            store.patch({
+              showLearn: false,
+              learnTopicId: null,
+              gateTitle: faceDemo
+                ? "Face demo needs Android"
+                : lightDemo
+                  ? "Light demo needs Android"
+                  : "Marker demo needs Android",
+              gateBody: faceDemo
+                ? "Face-mesh peek uses ARCore Augmented Faces (front camera) in the Capacitor Android app. Open How it works → Face / body tracking → Try in AR from the installed app — not the browser, WebXR, or iOS in this build. Home Start AR still opens Instant Placement / planes."
+                : lightDemo
+                  ? "Light-estimate readout uses ARCore ambient intensity in the Capacitor Android app. Open How it works → Light estimation & shadows → Try in AR from the installed app — not the browser, WebXR, or iOS in this build. Home Start AR still uses a fixed Filament light."
+                  : "Image-target placement uses ARCore Augmented Images in the Capacitor Android app. Print /markers/deez_image_target.png about 16 cm (6 in) wide on matte paper, then Try in AR from the installed app — not the browser, WebXR, or iOS in this build.",
+              gateActionLabel: "Start AR",
+              gateError: false,
+            });
+            break;
+          }
+        }
+        store.patch({ showLearn: false, learnTopicId: null });
+        if (store.phase === "ar" || store.isStarting) break;
+        {
+          const button = actionEl as HTMLButtonElement;
+          button.disabled = true;
+          button.setAttribute("aria-busy", "true");
+          store.patch({ isStarting: true });
+          try {
+            const controller = await startSession(store, uiRoot, {
+              nativePlacementMode: faceDemo
+                ? "face"
+                : markerDemo
+                  ? "image"
+                  : "plane",
+              lightEstimateViz: lightDemo,
+            });
+            setController(controller);
+          } catch (error) {
+            store.patch({
+              gateTitle: "Could not start AR",
+              gateBody:
+                error instanceof Error ? error.message : "Unknown AR error",
+              gateActionLabel: "Try again",
+              gateError: true,
+              phase: "gate",
+            });
+          } finally {
+            store.patch({ isStarting: false });
+            button.disabled = false;
+            button.removeAttribute("aria-busy");
+          }
+        }
+        break;
+      }
       case "toggle-debug":
         store.patch({ debugEnabled: !store.debugEnabled });
         break;
       case "clear-all": {
         const controller = getController();
-        // #region agent log
-        fetch("http://127.0.0.1:7709/ingest/69ce765a-960d-441f-925a-4fbdc6c1814e", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "53ab5c",
-          },
-          body: JSON.stringify({
-            sessionId: "53ab5c",
-            runId: "post-fix",
-            hypothesisId: "C",
-            location: "session.ts:clear-all",
-            message: "clear-all action",
-            data: {
-              hasController: Boolean(controller),
-              isClearing: store.isClearing,
-              placedCount: store.placedCount,
-              skipped: !controller || store.isClearing || store.placedCount === 0,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
         if (!controller || store.isClearing || store.placedCount === 0) return;
         store.patch({ isClearing: true });
         controller.clearAll();
@@ -420,6 +508,8 @@ export function bindStoreActions(
               const started = await startNativeAr({
                 reducedMotion,
                 asset,
+                placementMode: current.nativePlacementMode,
+                lightEstimateViz: current.lightEstimateViz,
               });
               if (!started.ok) {
                 store.patch({ sessionError: started.error });

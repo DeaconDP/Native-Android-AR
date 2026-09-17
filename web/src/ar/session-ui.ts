@@ -1,4 +1,4 @@
-import type { ArMode } from "../native/arBridge";
+import type { ArMode, NativeArPlacementMode } from "../native/arBridge";
 import {
   nativeDebugPlaceFront,
   nativeMoveScreen,
@@ -8,6 +8,7 @@ import {
   nativeRotate,
   nativeSetScale,
 } from "../native/arBridge";
+import { coachForMilestone, type CoachMilestone } from "../learn/curriculum";
 import { EMERGE_TOTAL_MS, REDUCE_MS } from "./emergeMotion";
 import type { OrbitViewerHandle } from "./orbit-viewer";
 import type { WebXrViewerHandle } from "./webxr-viewer";
@@ -20,7 +21,7 @@ type Ptr = { x: number; y: number; startX: number; startY: number };
 
 export type SessionUiCallbacks = {
   onPlaced: () => void;
-  onHint: (hint: string) => void;
+  onHint: (hint: string, topicId: string) => void;
   onError: (message: string | null) => void;
   onExit: () => void;
 };
@@ -52,27 +53,19 @@ function updateHint(
   mode: ArMode,
   placed: boolean,
   surfaceReady: boolean,
-  onHint: (h: string) => void,
+  onHint: (h: string, topicId: string) => void,
   gestured = false,
+  placement: NativeArPlacementMode = "plane",
+  lightEstimateViz = false,
 ): void {
-  const cameraAr = mode === "native" || mode === "webxr";
-  if (!cameraAr) {
-    onHint("Drag to rotate · pinch to scale - orbit fallback (no world anchors)");
-    return;
-  }
-  if (!placed) {
-    onHint(
-      surfaceReady
-        ? "Surface ready - tap to anchor (Instant Placement / plane hit)"
-        : "Move the phone - SLAM tracks features to find a surface",
-    );
-    return;
-  }
-  if (gestured) {
-    onHint("Open Learn for Instant Placement, hit cascades & anchors");
-    return;
-  }
-  onHint("Drag to rotate · pinch to scale · two fingers to move");
+  let milestone: CoachMilestone;
+  if (mode === "orbit") milestone = "orbit";
+  else if (!placed) milestone = surfaceReady ? "ready" : "scan";
+  else if (gestured) milestone = "gesture";
+  else milestone = "placed";
+
+  const coach = coachForMilestone(mode, milestone, placement, lightEstimateViz);
+  onHint(coach.text, coach.topicId);
 }
 
 export function mountSessionGestures(
@@ -83,10 +76,15 @@ export function mountSessionGestures(
     orbit?: OrbitViewerHandle | null;
   },
   callbacks: SessionUiCallbacks,
+  nativePlacement: NativeArPlacementMode = "plane",
+  lightEstimateViz = false,
 ): SessionUiController {
   const cameraAr = mode === "native" || mode === "webxr";
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     .matches;
+  const imageMode = nativePlacement === "image";
+  const faceMode = nativePlacement === "face";
+  const lockedPose = imageMode || faceMode;
 
   let placed = mode === "orbit";
   let surfaceReady = mode === "orbit";
@@ -117,7 +115,17 @@ export function mountSessionGestures(
     }, ms);
   };
 
-  updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured);
+  const pushHint = () =>
+    updateHint(
+      mode,
+      placed,
+      surfaceReady,
+      callbacks.onHint,
+      gestured,
+      nativePlacement,
+      lightEstimateViz,
+    );
+  pushHint();
 
   const listPointers = () => [...pointers.values()];
   const centroidOf = (pts: Ptr[]) => {
@@ -136,7 +144,7 @@ export function mountSessionGestures(
     if (!placed || learnNudgeSent) return;
     gestured = true;
     learnNudgeSent = true;
-    updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured);
+    pushHint();
   };
 
   const applyRotate = (dx: number, dy: number) => {
@@ -254,10 +262,14 @@ export function mountSessionGestures(
           else if (centroidTravel > 14) twoFingerMode = "pan";
         }
         if (twoFingerMode === "pinch") {
-          pendingScale = clampScale(pinch.startScale * distRatio);
-          scheduleFlush();
+          if (!faceMode) {
+            pendingScale = clampScale(pinch.startScale * distRatio);
+            scheduleFlush();
+          }
         } else if (twoFingerMode === "pan" && lastCentroid) {
-          if (cameraAr) applyMoveScreen(c.x, c.y);
+          if (lockedPose) {
+            /* Pose is the printed marker or the tracked face. */
+          } else if (cameraAr) applyMoveScreen(c.x, c.y);
           else backends.orbit?.pan(cdx, cdy);
         }
       }
@@ -283,7 +295,7 @@ export function mountSessionGestures(
     try {
       stage.releasePointerCapture(e.pointerId);
     } catch {
-      /* already released */
+      void 0;
     }
 
     const remaining = listPointers();
@@ -301,7 +313,11 @@ export function mountSessionGestures(
 
     if (!placed && cameraAr) {
       const travel = Math.hypot(ptr.x - ptr.startX, ptr.y - ptr.startY);
-      if (travel <= TAP_SLOP && surfaceReady) {
+        if (travel <= TAP_SLOP && surfaceReady) {
+        if (lockedPose) {
+          // Auto-places when ARCore locks the marker or face.
+          return;
+        }
         void (async () => {
           let ok = false;
           if (mode === "native") {
@@ -316,7 +332,7 @@ export function mountSessionGestures(
             beginSpawnLock();
             callbacks.onPlaced();
             callbacks.onError(null);
-            updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured);
+            pushHint();
           } else {
             callbacks.onError("Scan a flat surface, then tap the highlighted area.");
           }
@@ -331,7 +347,7 @@ export function mountSessionGestures(
   };
 
   const onWheel = (e: WheelEvent) => {
-    if (!placed || spawning) return;
+    if (!placed || spawning || faceMode) return;
     e.preventDefault();
     applyScale(scale * (e.deltaY > 0 ? 0.94 : 1.06));
     backends.orbit?.noteInteracted();
@@ -340,33 +356,6 @@ export function mountSessionGestures(
   const onClick = (e: MouseEvent) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>("[data-session-action]");
     const action = target?.dataset.sessionAction;
-    // #region agent log
-    console.log("[dbg53ab5c]", "session-action click", action ?? null, mode, placed);
-    fetch("http://127.0.0.1:7709/ingest/69ce765a-960d-441f-925a-4fbdc6c1814e", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "53ab5c",
-      },
-      body: JSON.stringify({
-        sessionId: "53ab5c",
-        runId: "post-fix",
-        hypothesisId: "A",
-        location: "session-ui.ts:onClick",
-        message: "session-action click",
-        data: {
-          action: action ?? null,
-          tag: (e.target as HTMLElement)?.tagName ?? null,
-          className: String((e.target as HTMLElement)?.className ?? "").slice(0, 80),
-          mode,
-          placed,
-          clientY: e.clientY,
-          vh: window.innerHeight,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (!action) return;
     e.preventDefault();
     switch (action) {
@@ -374,70 +363,11 @@ export function mountSessionGestures(
         callbacks.onExit();
         break;
       case "reposition":
-        // #region agent log
-        fetch("http://127.0.0.1:7709/ingest/69ce765a-960d-441f-925a-4fbdc6c1814e", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "53ab5c",
-          },
-          body: JSON.stringify({
-            sessionId: "53ab5c",
-            runId: "post-fix",
-            hypothesisId: "B",
-            location: "session-ui.ts:reposition",
-            message: "reposition handler entered",
-            data: { mode, placedBefore: placed, surfaceReady },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-        if (mode === "native") {
-          void nativeReposition()
-            .then(() => {
-              // #region agent log
-              fetch("http://127.0.0.1:7709/ingest/69ce765a-960d-441f-925a-4fbdc6c1814e", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "X-Debug-Session-Id": "53ab5c",
-                },
-                body: JSON.stringify({
-                  sessionId: "53ab5c",
-                  runId: "post-fix",
-                  hypothesisId: "B",
-                  location: "session-ui.ts:reposition",
-                  message: "nativeReposition resolved",
-                  data: { ok: true },
-                  timestamp: Date.now(),
-                }),
-              }).catch(() => {});
-              // #endregion
-            })
-            .catch((err: unknown) => {
-              // #region agent log
-              fetch("http://127.0.0.1:7709/ingest/69ce765a-960d-441f-925a-4fbdc6c1814e", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "X-Debug-Session-Id": "53ab5c",
-                },
-                body: JSON.stringify({
-                  sessionId: "53ab5c",
-                  runId: "post-fix",
-                  hypothesisId: "B",
-                  location: "session-ui.ts:reposition",
-                  message: "nativeReposition rejected",
-                  data: { error: String(err) },
-                  timestamp: Date.now(),
-                }),
-              }).catch(() => {});
-              // #endregion
-            });
-        } else backends.webxr?.reposition();
+        if (mode === "native") void nativeReposition();
+        else backends.webxr?.reposition();
         placed = false;
         scale = 1;
-        updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured);
+        pushHint();
         break;
       case "recenter":
         if (mode === "native") void nativeRecenter();
@@ -450,7 +380,7 @@ export function mountSessionGestures(
             if (ok) {
               placed = true;
               callbacks.onPlaced();
-              updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured);
+              pushHint();
             }
           });
         }
@@ -473,7 +403,7 @@ export function mountSessionGestures(
   return {
     setSurfaceReady(ready) {
       surfaceReady = ready;
-      updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured);
+      pushHint();
     },
     setPlaced(next) {
       placed = next;
@@ -482,7 +412,7 @@ export function mountSessionGestures(
         gestured = false;
         learnNudgeSent = false;
       }
-      updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured);
+      pushHint();
     },
     getScale: () => scale,
     dispose() {

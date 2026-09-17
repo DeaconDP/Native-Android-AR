@@ -2,6 +2,9 @@ import type { PluginListenerHandle } from "@capacitor/core";
 
 export type NativeArBackend = "arkit" | "arcore" | "none";
 
+/** Native world-lock mode. Default plane = Instant Placement / planes. */
+export type NativeArPlacementMode = "plane" | "image" | "face";
+
 export interface NativeArSupportResult {
   supported: boolean;
   backend: NativeArBackend;
@@ -11,6 +14,22 @@ export interface NativeArStartOptions {
   /** Capacitor asset-relative path, without a leading slash. */
   modelPath: string;
   reducedMotion?: boolean;
+  /** ARCore feature-point HUD. Default true on Android native sessions. */
+  featurePointHud?: boolean;
+  /** ARCore depth heatmap peek. Default true on Android native sessions. */
+  depthPeek?: boolean;
+  /**
+   * Default `"plane"`. `"image"` tracks the bundled ARCore marker
+   * (`markers/deez_image_target.png`, print ~16 cm wide) and parents the model
+   * to that image anchor. `"face"` is ARCore Augmented Faces (front camera,
+   * mesh wireframe + nose marker). Android only in this build.
+   */
+  placementMode?: NativeArPlacementMode;
+  /**
+   * ARCore ambient light-estimate teaching viz. Default false: plane/image
+   * labs keep a fixed Filament directional light. Android only in this build.
+   */
+  lightEstimateViz?: boolean;
 }
 
 export interface NativeArPointOptions {

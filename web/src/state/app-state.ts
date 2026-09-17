@@ -33,6 +33,7 @@ export interface AppState {
   showModelPicker: boolean;
   showLearn: boolean;
   learnTopicId: string | null;
+  coachTopicId: string | null;
   trackingBanner: string | null;
   gateTitle: string;
   gateBody: string;
@@ -77,6 +78,7 @@ export function createAppState(initialAsset: PlacementAsset): AppState & {
     showModelPicker: false,
     showLearn: false,
     learnTopicId: null,
+    coachTopicId: null,
     trackingBanner: null,
     gateTitle: "Deez-Native AR",
     gateBody: "Checking AR support…",
@@ -131,6 +133,9 @@ export function createAppState(initialAsset: PlacementAsset): AppState & {
     },
     get learnTopicId() {
       return state.learnTopicId;
+    },
+    get coachTopicId() {
+      return state.coachTopicId;
     },
     get trackingBanner() {
       return state.trackingBanner;

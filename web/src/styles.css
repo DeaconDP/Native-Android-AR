@@ -450,10 +450,28 @@ html.is-ar-native body,
   line-height: 1.45;
 }
 
+.learn__group {
+  margin: 0 0 18px;
+}
+
+.learn__group-title {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.learn__group-blurb {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
 .learn__list {
   display: grid;
   gap: 8px;
-  padding-bottom: 8px;
+  padding-bottom: 4px;
 }
 
 .learn__item {
@@ -470,14 +488,46 @@ html.is-ar-native body,
   cursor: pointer;
 }
 
+.learn__item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .learn__item-title {
   font-weight: 600;
+}
+
+.learn__status {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.learn__status--live {
+  color: var(--accent);
+}
+
+.learn__status--explained {
+  color: var(--text-secondary);
+}
+
+.learn__status--roadmap {
+  color: var(--warn);
 }
 
 .learn__item-summary {
   font-size: 0.85rem;
   color: var(--text-secondary);
   line-height: 1.35;
+}
+
+.learn__article-meta {
+  margin: 0 0 6px;
 }
 
 .learn__article-title {
@@ -489,6 +539,12 @@ html.is-ar-native body,
   display: grid;
   gap: 16px;
   padding-bottom: 12px;
+}
+
+.learn__try {
+  width: 100%;
+  margin: 4px 0 12px;
+  min-height: 48px;
 }
 
 .learn__section h3 {

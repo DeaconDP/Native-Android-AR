@@ -97,6 +97,16 @@ public class NativeArPlugin: CAPPlugin, CAPBridgedPlugin, ARSCNViewDelegate {
             return
         }
         reducedMotion = call.getBool("reducedMotion") ?? false
+        let placementMode = call.getString("placementMode") ?? "plane"
+        if placementMode.lowercased() == "image" {
+            call.reject("Image-target AR is Android-only in this build.")
+            return
+        }
+        if placementMode.lowercased() == "face" {
+            call.reject("Face-mesh AR is Android-only in this build.")
+            return
+        }
+        // lightEstimateViz is Android-only in this build (ROADMAP Deferred).
         let begin = { [weak self] in
             DispatchQueue.main.async {
                 guard let self else { return }

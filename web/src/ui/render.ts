@@ -48,7 +48,7 @@ function mountStructure(root: HTMLElement, state: AppState): void {
       ${showGate ? renderGate(state) : ""}
       ${inAr ? renderArChrome(state) : ""}
       ${state.showModelPicker ? renderModelPicker(state) : ""}
-      ${state.showLearn ? renderLearnSheet(state.learnTopicId, state.arMode, state.metrics.arMode) : ""}
+      ${state.showLearn ? renderLearnSheet(state.learnTopicId, state.arMode, state.metrics.arMode, state.phase) : ""}
     </div>
   `;
 

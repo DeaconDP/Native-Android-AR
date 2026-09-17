@@ -1,0 +1,16 @@
+﻿ts	phase	decision	why	evidence	result
+2026-09-17T15:18:39Z	autonomous	serial Phase 3 demos under red band Autonomous run	pstack budget small; ROADMAP says do not parallelize demos	ROADMAP.md:12-23	exit predicate set
+2026-09-17T15:19:39Z	demo-1	delegate feature-point HUD to poteto-agent on grok	Feature playbook code delegate; red band single worker	Task 62c421a5	in flight
+2026-09-17T15:32:56Z	demo-1	accept Android feature-point HUD e499628	reviewed overlay between ARSceneView and WebView; assembleDebug claimed; device QA still open	commit e499628 FeaturePointHudView.kt NativeArPlugin.kt	unit+build ok; live INCONCLUSIVE without phone
+2026-09-17T15:34:20Z	demo-1	push e499628 to update PR 2	Opening-a-pr already open; babysit deferred per playbook	https://github.com/DeaconDP/Native-Android-AR/pull/2	pushed
+2026-09-17T15:34:20Z	demo-2	delegate depth occlusion peek to poteto-agent	serial Phase 3; mirror FeaturePointHud overlay pattern	Task depth-peek	in flight
+2026-09-17T15:48:03Z	demo-2	accept Android depth heatmap peek 1cf662a	reviewed DepthPeekView + acquireDepthImage16Bits use{}; already on origin	commit 1cf662a DepthPeekView.kt	unit+build ok; live INCONCLUSIVE without phone
+2026-09-17T15:48:24Z	demo-3	delegate image marker target place to poteto-agent	serial Phase 3 after depth peek accept	Task feebb37e	in flight
+2026-09-17T16:07:29Z	demo-3	accept Android image-target marker d686873	nativePlacementMode separated from WebXR floor/wall; AugmentedImage FULL_TRACKING auto-place; already on origin	commit d686873 ImageTargetSupport.kt	unit+build ok; live INCONCLUSIVE without phone+print
+2026-09-17T16:07:47Z	demo-4	delegate light-estimate viz to poteto-agent	serial Phase 3 after marker accept; default fixed light preserved	Task e5487e52	in flight
+2026-09-17T16:22:32Z	demo-4	accept Android light-estimate viz d031f9d	opt-in AMBIENT_INTENSITY; default Start AR fixed light preserved; already on origin	commit d031f9d LightEstimateHudView.kt	unit+build ok; live INCONCLUSIVE without phone
+2026-09-17T16:22:51Z	demo-5	delegate face mesh peek to poteto-agent	prefer Android Augmented Faces so Windows can assembleDebug; iOS deferred if needed	Task 8cc10947	in flight
+2026-09-17T16:44:45Z	demo-5	accept Android face-mesh peek 236840f	FRONT_CAMERA + MESH3D; custom project not AugmentedFaceNode; already on origin	commit 236840f FaceMeshPeekView.kt FaceMeshSupport.kt	unit+build ok; live INCONCLUSIVE without phone
+2026-09-17T16:44:45Z	autonomous	Phase 3 Android demos 1-5 complete; geo stays hard-deferred	exit predicate met for this run	ROADMAP.md TODO.md PR 2	predicate met; device QA still open
+2026-09-17T16:46:42Z	autonomous	mark Phase 3 complete in ROADMAP/TODO and refresh PR 2	exit predicate docs; PR body was stale on deferred demos	commit c5bea66 https://github.com/DeaconDP/Native-Android-AR/pull/2	docs pushed; Attention audit done
+2026-09-17T16:48:18Z	verify	parent re-ran plugin tsc, web verify:curriculum, assembleDebug at c5bea66	Attention flag: build evidence was subagent-claimed	plugins/native-ar npm run build; web verify-curriculum ok 26; android assembleDebug exit 0	parent-verified build; live still INCONCLUSIVE

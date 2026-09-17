@@ -14,6 +14,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.net.Uri
+import android.opengl.Matrix
 import android.os.Handler
 import android.os.Looper
 import android.view.View
@@ -34,11 +35,18 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import com.google.ar.core.ArCoreApk
+import com.google.ar.core.AugmentedFace
+import com.google.ar.core.AugmentedImage
 import com.google.ar.core.Config
+import com.google.ar.core.Coordinates2d
+import com.google.ar.core.Frame
 import com.google.ar.core.HitResult
 import com.google.ar.core.InstantPlacementPoint
+import com.google.ar.core.LightEstimate
 import com.google.ar.core.Plane
+import com.google.ar.core.PointCloud
 import com.google.ar.core.Pose
+import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.android.filament.Texture
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
@@ -46,6 +54,7 @@ import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationExceptio
 import io.github.sceneview.SceneView
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
+import io.github.sceneview.ar.node.PoseNode
 import io.github.sceneview.ar.scene.PlaneRenderer
 import io.github.sceneview.loaders.MaterialLoader
 import io.github.sceneview.material.setParameter
@@ -89,6 +98,27 @@ import org.json.JSONObject
 class NativeArPlugin : Plugin() {
 
     private var arSceneView: ARSceneView? = null
+    private var featurePointHudView: FeaturePointHudView? = null
+    private var featurePointHudEnabled = true
+    private var depthPeekView: DepthPeekView? = null
+    private var depthPeekEnabled = true
+    private var lightEstimateHudView: LightEstimateHudView? = null
+    private var lightEstimateVizEnabled = false
+    private var lightEstimateTick = 0
+    private val lightColorScratch = FloatArray(4)
+    private var depthModeActive = false
+    private var depthModeResolved = false
+    private var depthPeekTick = 0
+    private var depthPeekHidden = false
+    private var depthPeekPixels: IntArray? = null
+    private val depthImageCorners = FloatArray(8)
+    private val depthViewCorners = FloatArray(8)
+    private val hudViewMtx = FloatArray(16)
+    private val hudProjMtx = FloatArray(16)
+    private val hudVpMtx = FloatArray(16)
+    private val hudWorld = FloatArray(4)
+    private val hudClip = FloatArray(4)
+    private val hudScratch = FloatArray(FeaturePointHudView.MAX_POINTS * 2)
     private var materialLoader: MaterialLoader? = null
     private var loadedModelInstance: ModelInstance? = null
     private var modelNode: ModelNode? = null
@@ -127,6 +157,25 @@ class NativeArPlugin : Plugin() {
     private var sensorManager: SensorManager? = null
     private var imuWarmupListener: SensorEventListener? = null
     private var lastTrackingKey: String? = null
+    /** Image-target session (ARCore Augmented Images). Default false = plane lab. */
+    private var imagePlacementMode = false
+    /** Face-mesh teaching session (ARCore Augmented Faces, front camera). */
+    private var facePlacementMode = false
+    private var faceMeshPeekView: FaceMeshPeekView? = null
+    private var faceNoseNode: PoseNode? = null
+    private var faceNoseMarker: CubeNode? = null
+    private var faceMeshTick = 0
+    private val faceVertScratch = FloatArray(FaceMeshPeekView.MAX_VERTS * 2)
+    private val faceLineScratch = FloatArray(FaceMeshPeekView.MAX_LINES * 4)
+    private val faceLandmarkScratch = FloatArray(FaceMeshPeekView.MAX_LANDMARKS * 2)
+    private val faceProjected = IntArray(FaceMeshPeekView.MAX_VERTS)
+    private val faceLocal = FloatArray(3)
+    private val faceWorld = FloatArray(3)
+    private val faceRegions = arrayOf(
+        AugmentedFace.RegionType.NOSE_TIP,
+        AugmentedFace.RegionType.FOREHEAD_LEFT,
+        AugmentedFace.RegionType.FOREHEAD_RIGHT,
+    )
 
     private class PluginLifecycleOwner : LifecycleOwner {
         val registry = LifecycleRegistry(this)
@@ -164,6 +213,14 @@ class NativeArPlugin : Plugin() {
         /** User pinch range — free feel with hard stops at the ends. */
         private const val SCALE_MIN = 0.2f
         private const val SCALE_MAX = 5f
+        /** Fixed Filament directional intensity for the plane lab. */
+        private const val MAIN_LIGHT_INTENSITY = 100_000f
+        /** Typical indoor ARCore pixel intensity used to map estimate → lux. */
+        private const val LIGHT_REF_PIXEL = 0.4f
+        private const val LIGHT_INTENSITY_MIN = 12_000f
+        private const val LIGHT_INTENSITY_MAX = 180_000f
+        /** Tiny nose-tip marker for the face teaching peek. */
+        private const val FACE_NOSE_CUBE_M = 0.014f
     }
 
     /** org.json / Capacitor JSObject forbids NaN/Inf in resolve payloads. */
@@ -206,6 +263,18 @@ class NativeArPlugin : Plugin() {
             return
         }
         reducedMotion = call.getBoolean("reducedMotion") ?: false
+        val placement = (call.getString("placementMode") ?: "plane").lowercase()
+        imagePlacementMode = placement == "image"
+        facePlacementMode = placement == "face"
+        lightEstimateVizEnabled = !imagePlacementMode && !facePlacementMode &&
+            (call.getBoolean("lightEstimateViz") ?: false)
+        if (imagePlacementMode || facePlacementMode || lightEstimateVizEnabled) {
+            featurePointHudEnabled = false
+            depthPeekEnabled = false
+        } else {
+            featurePointHudEnabled = call.getBoolean("featurePointHud") ?: true
+            depthPeekEnabled = call.getBoolean("depthPeek") ?: true
+        }
         placed = false
         surfaceFound = false
         planeVisualReady = false
@@ -339,7 +408,11 @@ class NativeArPlugin : Plugin() {
                 "native_move|x=$x|y=$y|placed=$placed|emerging=${emergeAnimator != null}",
             )
             // #endregion
-            val didMove = arSceneView?.let { moveModelAtScreen(x, y, it) } ?: false
+            val didMove = if (imagePlacementMode || facePlacementMode) {
+                false
+            } else {
+                arSceneView?.let { moveModelAtScreen(x, y, it) } ?: false
+            }
             // #region agent log
             Logger.info("DBG_a996cb", "native_move_result|moved=$didMove")
             // #endregion
@@ -351,7 +424,16 @@ class NativeArPlugin : Plugin() {
     fun reposition(call: PluginCall) {
         bridge.executeOnMainThread {
             clearPlacement(keepModel = true)
-            arSceneView?.let { stylePlaneRenderer(it) }
+            if (facePlacementMode) {
+                destroyFaceContent()
+                surfaceFound = false
+                notifyTracking("initializing", "Face the front camera")
+            } else if (imagePlacementMode) {
+                surfaceFound = false
+                notifyTracking("initializing", "Point camera at the marker")
+            } else {
+                arSceneView?.let { stylePlaneRenderer(it) }
+            }
             call.resolve()
         }
     }
@@ -359,7 +441,9 @@ class NativeArPlugin : Plugin() {
     @PluginMethod
     fun recenter(call: PluginCall) {
         bridge.executeOnMainThread {
-            faceCamera(alignViewpoint = true)
+            if (!facePlacementMode) {
+                faceCamera(alignViewpoint = true)
+            }
             call.resolve()
         }
     }
@@ -369,6 +453,10 @@ class NativeArPlugin : Plugin() {
         val dx = call.getFloat("dx") ?: 0f
         val dy = call.getFloat("dy") ?: 0f
         bridge.executeOnMainThread {
+            if (facePlacementMode) {
+                call.resolve()
+                return@executeOnMainThread
+            }
             val node = modelNode?.takeIf { placed } ?: run {
                 call.resolve()
                 return@executeOnMainThread
@@ -462,6 +550,15 @@ class NativeArPlugin : Plugin() {
         val withCube = call.getBoolean("withCube", true) == true
         val forceMatte = call.getBoolean("demetalize", false) == true
         bridge.executeOnMainThread {
+            if (facePlacementMode) {
+                call.resolve(
+                    JSObject().apply {
+                        put("placed", false)
+                        put("error", "face-mode")
+                    },
+                )
+                return@executeOnMainThread
+            }
             val result = placeModelInFrontOfCamera(withCube, forceMatte)
             call.resolve(result)
         }
@@ -498,6 +595,16 @@ class NativeArPlugin : Plugin() {
             context = activity,
             sharedActivity = null,
             sharedLifecycle = null,
+            sessionFeatures = if (facePlacementMode) {
+                setOf(Session.Feature.FRONT_CAMERA)
+            } else {
+                emptySet()
+            },
+            sessionCameraConfig = if (facePlacementMode) {
+                { session -> FaceMeshSupport.pickFrontCamera(session) }
+            } else {
+                null
+            },
             onSessionFailed = { ex ->
                 bridge.executeOnMainThread {
                     Logger.error("NativeAr session failed", ex)
@@ -506,23 +613,61 @@ class NativeArPlugin : Plugin() {
                     notifySessionEnded()
                 }
             },
+            onSessionResumed = { session ->
+                if (facePlacementMode) {
+                    try {
+                        val config = session.config
+                        FaceMeshSupport.applyToConfig(config)
+                        session.configure(config)
+                    } catch (ex: Exception) {
+                        Logger.error("NativeAr face session resume config failed", ex)
+                    }
+                }
+            },
         )
 
         try {
             sceneView.arCore.checkCameraPermission = false
             sceneView.arCore.checkAvailability = false
             sceneView.keepScreenOn = true
-            stylePlaneRenderer(sceneView)
+            if (imagePlacementMode || facePlacementMode) {
+                sceneView.planeRenderer.isEnabled = false
+                sceneView.planeRenderer.isVisible = false
+            } else {
+                stylePlaneRenderer(sceneView)
+            }
             sceneView.configureSession { session, config ->
-                config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
                 config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                config.focusMode = Config.FocusMode.AUTO
-                config.lightEstimationMode = Config.LightEstimationMode.DISABLED
-                config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
-                if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                    config.depthMode = Config.DepthMode.AUTOMATIC
+                config.focusMode = if (facePlacementMode) {
+                    Config.FocusMode.FIXED
                 } else {
+                    Config.FocusMode.AUTO
+                }
+                config.lightEstimationMode = if (lightEstimateVizEnabled) {
+                    Config.LightEstimationMode.AMBIENT_INTENSITY
+                } else {
+                    Config.LightEstimationMode.DISABLED
+                }
+                if (facePlacementMode) {
+                    FaceMeshSupport.applyToConfig(config)
+                    depthModeActive = false
+                    depthModeResolved = true
+                } else if (imagePlacementMode) {
+                    ImageTargetSupport.applyToConfig(session, config, activity.assets)
+                    depthModeActive = false
+                    depthModeResolved = true
                     config.depthMode = Config.DepthMode.DISABLED
+                } else {
+                    config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+                    config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
+                    val depthOk = session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)
+                    depthModeActive = depthOk
+                    depthModeResolved = true
+                    config.depthMode = if (depthOk) {
+                        Config.DepthMode.AUTOMATIC
+                    } else {
+                        Config.DepthMode.DISABLED
+                    }
                 }
             }
 
@@ -531,31 +676,40 @@ class NativeArPlugin : Plugin() {
             if (sceneView.mainLightNode == null) {
                 sceneView.mainLightNode = SceneView.DefaultLightNode(sceneView.engine)
             }
-            val lightDirection = run {
-                val x = -0.5f
-                val y = -1f
-                val z = -0.8f
-                val length = sqrt(x * x + y * y + z * z)
-                Direction(x / length, y / length, z / length)
-            }
-            sceneView.mainLightNode?.let { light ->
-                light.intensity = 100_000f
-                light.lightDirection = lightDirection
-            }
-            sceneView.mainLightEstimatedNode?.let { light ->
-                light.intensity = 100_000f
-                light.lightDirection = lightDirection
-            }
+            applyFixedMainLight(sceneView)
 
             sceneView.onSessionUpdated = { _, frame ->
                 if (!sessionFrameReceived) {
                     sessionFrameReceived = true
                     cancelSessionWatchdog()
                 }
-                updateSurfaceProbe(sceneView, frame)
+                if (facePlacementMode) {
+                    updateFaceMesh(sceneView, frame)
+                } else if (imagePlacementMode) {
+                    updateImageTarget(sceneView, frame)
+                } else {
+                    updateSurfaceProbe(sceneView, frame)
+                }
+                featurePointHudView?.let { updateFeaturePointHud(frame, it) }
+                depthPeekView?.let { updateDepthPeek(frame, it) }
+                if (lightEstimateVizEnabled) {
+                    updateLightEstimate(sceneView, frame)
+                }
                 when (frame.camera.trackingState) {
                     TrackingState.TRACKING -> {
-                        if (surfaceFound) {
+                        if (facePlacementMode) {
+                            when {
+                                placed -> notifyTracking("ready", "Face locked")
+                                surfaceFound -> notifyTracking("ready", "Face locked")
+                                else -> notifyTracking("initializing", "Face the front camera")
+                            }
+                        } else if (imagePlacementMode) {
+                            when {
+                                placed -> notifyTracking("ready", "Placed on marker")
+                                surfaceFound -> notifyTracking("ready", "Marker locked")
+                                else -> notifyTracking("initializing", "Point camera at the marker")
+                            }
+                        } else if (surfaceFound) {
                             notifyTracking("ready", if (placed) "Fossil placed" else "Tap to place a fossil")
                         } else {
                             notifyTracking("initializing", "Move phone to find a surface")
@@ -572,6 +726,30 @@ class NativeArPlugin : Plugin() {
             arLifecycleOwner = owner
 
             webParent.addView(sceneView, index, params)
+            var overlayAt = index + 1
+            if (featurePointHudEnabled) {
+                val hud = FeaturePointHudView(activity)
+                webParent.addView(hud, overlayAt, params)
+                featurePointHudView = hud
+                overlayAt++
+            }
+            if (depthPeekEnabled) {
+                val peek = DepthPeekView(activity)
+                webParent.addView(peek, overlayAt, params)
+                depthPeekView = peek
+                overlayAt++
+            }
+            if (lightEstimateVizEnabled) {
+                val chip = LightEstimateHudView(activity)
+                webParent.addView(chip, overlayAt, params)
+                lightEstimateHudView = chip
+                overlayAt++
+            }
+            if (facePlacementMode) {
+                val peek = FaceMeshPeekView(activity)
+                webParent.addView(peek, overlayAt, params)
+                faceMeshPeekView = peek
+            }
             webView.bringToFront()
             materialLoader = MaterialLoader(sceneView.engine, activity)
             arSceneView = sceneView
@@ -590,18 +768,22 @@ class NativeArPlugin : Plugin() {
                         sessionFrameReceived = false
                         scheduleSessionWatchdog()
                         onReady()
-                        preloadModel(
-                            sceneView = sceneView,
-                            modelPath = modelPath,
-                            onLoaded = { /* ready for place */ },
-                            onFailed = { ex ->
-                                Logger.error("NativeAr model preload failed", ex)
-                                notifyTracking(
-                                    "unavailable",
-                                    "Could not load this fossil model.",
-                                )
-                            },
-                        )
+                        if (facePlacementMode) {
+                            /* Mesh + nose marker come from Augmented Faces frames. */
+                        } else {
+                            preloadModel(
+                                sceneView = sceneView,
+                                modelPath = modelPath,
+                                onLoaded = { /* ready for place */ },
+                                onFailed = { ex ->
+                                    Logger.error("NativeAr model preload failed", ex)
+                                    notifyTracking(
+                                        "unavailable",
+                                        "Could not load this fossil model.",
+                                    )
+                                },
+                            )
+                        }
                     } catch (ex: Exception) {
                         attachCompleted = false
                         stopImuWarmup()
@@ -962,6 +1144,206 @@ class NativeArPlugin : Plugin() {
         }
     }
 
+    private fun defaultLightDirection(): Direction {
+        val x = -0.5f
+        val y = -1f
+        val z = -0.8f
+        val length = sqrt(x * x + y * y + z * z)
+        return Direction(x / length, y / length, z / length)
+    }
+
+    private fun applyFixedMainLight(sceneView: ARSceneView) {
+        val lightDirection = defaultLightDirection()
+        sceneView.mainLightNode?.let { light ->
+            light.intensity = MAIN_LIGHT_INTENSITY
+            light.lightDirection = lightDirection
+        }
+        sceneView.mainLightEstimatedNode?.let { light ->
+            light.intensity = MAIN_LIGHT_INTENSITY
+            light.lightDirection = lightDirection
+        }
+    }
+
+    private fun mapPixelToIntensity(pixel: Float): Float {
+        val safe = if (pixel.isFinite()) pixel.coerceAtLeast(0f) else LIGHT_REF_PIXEL
+        return (MAIN_LIGHT_INTENSITY * (safe / LIGHT_REF_PIXEL))
+            .coerceIn(LIGHT_INTENSITY_MIN, LIGHT_INTENSITY_MAX)
+    }
+
+    private fun updateLightEstimate(sceneView: ARSceneView, frame: Frame) {
+        val estimate = frame.lightEstimate
+        val valid = estimate.state == LightEstimate.State.VALID
+        var pixel = 0f
+        lightColorScratch[0] = 1f
+        lightColorScratch[1] = 1f
+        lightColorScratch[2] = 1f
+        lightColorScratch[3] = 1f
+        if (valid) {
+            pixel = estimate.pixelIntensity
+            try {
+                estimate.getColorCorrection(lightColorScratch, 0)
+            } catch (_: Exception) {
+                // Color correction is optional on this API.
+            }
+        }
+        val intensity = if (valid) mapPixelToIntensity(pixel) else MAIN_LIGHT_INTENSITY
+        val r = lightColorScratch[0].coerceIn(0.15f, 3f)
+        val g = lightColorScratch[1].coerceIn(0.15f, 3f)
+        val b = lightColorScratch[2].coerceIn(0.15f, 3f)
+        val direction = defaultLightDirection()
+        sceneView.mainLightNode?.let { light ->
+            light.intensity = intensity
+            light.lightDirection = direction
+            light.color = SceneColor(r, g, b, 1f)
+        }
+        sceneView.mainLightEstimatedNode?.let { light ->
+            light.intensity = intensity
+            light.lightDirection = direction
+            light.color = SceneColor(r, g, b, 1f)
+        }
+
+        lightEstimateTick += 1
+        if (lightEstimateTick % LightEstimateHudView.FRAME_STRIDE != 0) return
+        lightEstimateHudView?.setReadout(valid, pixel, intensity, lightColorScratch)
+    }
+
+    private fun updateFeaturePointHud(frame: Frame, hud: FeaturePointHudView) {
+        val w = hud.width.toFloat()
+        val h = hud.height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        hud.dimmed = placed
+
+        val camera = frame.camera
+        if (camera.trackingState != TrackingState.TRACKING) {
+            hud.setScreenPoints(hudScratch, 0, 0)
+            return
+        }
+
+        camera.getViewMatrix(hudViewMtx, 0)
+        camera.getProjectionMatrix(hudProjMtx, 0, 0.1f, 100f)
+        Matrix.multiplyMM(hudVpMtx, 0, hudProjMtx, 0, hudViewMtx, 0)
+
+        var cloud: PointCloud? = null
+        try {
+            cloud = frame.acquirePointCloud()
+            val buf = cloud.points
+            val pos = buf.position()
+            val total = buf.remaining() / 4
+            if (total <= 0) {
+                hud.setScreenPoints(hudScratch, 0, 0)
+                return
+            }
+            val max = FeaturePointHudView.MAX_POINTS
+            val stride = if (total <= max) 1 else total / max
+            var i = 0
+            var drawn = 0
+            while (i < total && drawn < max) {
+                val base = pos + i * 4
+                if (buf.get(base + 3) >= FeaturePointHudView.MIN_CONFIDENCE) {
+                    hudWorld[0] = buf.get(base)
+                    hudWorld[1] = buf.get(base + 1)
+                    hudWorld[2] = buf.get(base + 2)
+                    hudWorld[3] = 1f
+                    Matrix.multiplyMV(hudClip, 0, hudVpMtx, 0, hudWorld, 0)
+                    val cw = hudClip[3]
+                    if (cw > 0.0001f) {
+                        val ndcX = hudClip[0] / cw
+                        val ndcY = hudClip[1] / cw
+                        if (ndcX >= -1f && ndcX <= 1f && ndcY >= -1f && ndcY <= 1f) {
+                            hudScratch[drawn * 2] = (ndcX + 1f) * 0.5f * w
+                            hudScratch[drawn * 2 + 1] = (1f - ndcY) * 0.5f * h
+                            drawn++
+                        }
+                    }
+                }
+                i += stride
+            }
+            hud.setScreenPoints(hudScratch, drawn, drawn)
+        } catch (_: Exception) {
+            // Skip this frame; point cloud is not always available.
+        } finally {
+            try {
+                cloud?.release()
+            } catch (_: Exception) {
+                // Already released.
+            }
+        }
+    }
+
+    private fun updateDepthPeek(frame: Frame, peek: DepthPeekView) {
+        if (depthModeResolved && !depthModeActive) {
+            if (!depthPeekHidden) {
+                depthPeekHidden = true
+                peek.post { peek.visibility = View.GONE }
+            }
+            return
+        }
+        if (!depthModeActive) return
+        peek.dimmed = placed
+        if (placed) {
+            peek.postInvalidateOnAnimation()
+            return
+        }
+        depthPeekTick += 1
+        if (depthPeekTick % DepthPeekView.FRAME_STRIDE != 0) return
+
+        try {
+            frame.acquireDepthImage16Bits().use { image ->
+                val w = image.width
+                val h = image.height
+                if (w <= 0 || h <= 0) return
+                val plane = image.planes[0]
+                val buf = plane.buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+                val rowStride = plane.rowStride
+                val pixelStride = plane.pixelStride
+                if (pixelStride <= 0 || rowStride <= 0) return
+                val step = if (max(w, h) > 160) 2 else 1
+                val outW = w / step
+                val outH = h / step
+                if (outW <= 0 || outH <= 0) return
+                val needed = outW * outH
+                val pixels = depthPeekPixels?.takeIf { it.size == needed }
+                    ?: IntArray(needed).also { depthPeekPixels = it }
+                var i = 0
+                for (y in 0 until outH) {
+                    val row = y * step * rowStride
+                    for (x in 0 until outW) {
+                        val idx = row + x * step * pixelStride
+                        val mm = if (idx + 1 < buf.limit()) {
+                            buf.getShort(idx).toInt() and 0xFFFF
+                        } else {
+                            0
+                        }
+                        pixels[i++] = DepthPeekView.colorForMm(mm)
+                    }
+                }
+                // Depth is lower-res than the camera; normalized corners still map to the view.
+                depthImageCorners[0] = 0f
+                depthImageCorners[1] = 0f
+                depthImageCorners[2] = 1f
+                depthImageCorners[3] = 0f
+                depthImageCorners[4] = 1f
+                depthImageCorners[5] = 1f
+                depthImageCorners[6] = 0f
+                depthImageCorners[7] = 1f
+                var corners: FloatArray? = depthViewCorners
+                try {
+                    frame.transformCoordinates2d(
+                        Coordinates2d.IMAGE_NORMALIZED,
+                        depthImageCorners,
+                        Coordinates2d.VIEW,
+                        depthViewCorners,
+                    )
+                } catch (_: Exception) {
+                    corners = null
+                }
+                peek.setHeatmap(pixels, outW, outH, corners)
+            }
+        } catch (_: Exception) {
+            // NotYetAvailable / unsupported this frame — keep last heatmap.
+        }
+    }
+
     private fun updateSurfaceProbe(sceneView: ARSceneView, frame: com.google.ar.core.Frame) {
         if (placed) return
         // Instant Placement: unlock tap as soon as the camera tracks — no plane wait.
@@ -979,6 +1361,290 @@ class NativeArPlugin : Plugin() {
         } ?: return
         planeVisualReady = true
         startPlaneReveal(sceneView)
+    }
+
+    private fun findTrackedImage(sceneView: ARSceneView, frame: Frame): AugmentedImage? {
+        val candidates = sceneView.session?.getAllTrackables(AugmentedImage::class.java)
+            ?: frame.getUpdatedTrackables(AugmentedImage::class.java)
+        return candidates.firstOrNull { image ->
+            image.name == ImageTargetSupport.TARGET_NAME &&
+                image.trackingState == TrackingState.TRACKING &&
+                image.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
+        }
+    }
+
+    private fun findTrackedFace(sceneView: ARSceneView, frame: Frame): AugmentedFace? {
+        val candidates = sceneView.session?.getAllTrackables(AugmentedFace::class.java)
+            ?: frame.getUpdatedTrackables(AugmentedFace::class.java)
+        return candidates.firstOrNull { face ->
+            face.trackingState == TrackingState.TRACKING
+        }
+    }
+
+    private fun updateFaceMesh(sceneView: ARSceneView, frame: Frame) {
+        val peek = faceMeshPeekView
+        val face = findTrackedFace(sceneView, frame)
+        if (face == null) {
+            if (surfaceFound) surfaceFound = false
+            faceNoseNode?.isVisible = false
+            peek?.clear()
+            return
+        }
+        if (!surfaceFound) {
+            surfaceFound = true
+            notifyTracking("ready", "Face locked")
+        }
+        attachFaceNoseMarker(sceneView, face)
+        faceMeshTick += 1
+        if (peek == null) return
+        if (faceMeshTick % FaceMeshPeekView.FRAME_STRIDE != 0) return
+        projectFaceMesh(frame, face, peek)
+    }
+
+    private fun attachFaceNoseMarker(sceneView: ARSceneView, face: AugmentedFace) {
+        val nosePose = face.getRegionPose(AugmentedFace.RegionType.NOSE_TIP)
+        var node = faceNoseNode
+        if (node == null) {
+            val loader = materialLoader ?: return
+            node = PoseNode(sceneView.engine, nosePose)
+            val marker = CubeNode(
+                engine = sceneView.engine,
+                size = Size(FACE_NOSE_CUBE_M, FACE_NOSE_CUBE_M, FACE_NOSE_CUBE_M),
+                materialInstance = loader.createColorInstance(
+                    SceneColor(0.24f, 0.84f, 0.96f, 1f),
+                    metallic = 0f,
+                    roughness = 0.55f,
+                    reflectance = 0.35f,
+                ),
+            )
+            node.addChildNode(marker)
+            sceneView.addChildNode(node)
+            faceNoseNode = node
+            faceNoseMarker = marker
+        } else {
+            node.pose = nosePose
+            node.isVisible = true
+        }
+        if (!placed) {
+            placed = true
+            notifyListeners("placed", JSObject())
+        }
+    }
+
+    private fun projectPointToView(
+        x: Float,
+        y: Float,
+        z: Float,
+        viewW: Float,
+        viewH: Float,
+        out: FloatArray,
+        outOffset: Int,
+    ): Boolean {
+        hudWorld[0] = x
+        hudWorld[1] = y
+        hudWorld[2] = z
+        hudWorld[3] = 1f
+        Matrix.multiplyMV(hudClip, 0, hudVpMtx, 0, hudWorld, 0)
+        val cw = hudClip[3]
+        if (cw <= 0.0001f) return false
+        val ndcX = hudClip[0] / cw
+        val ndcY = hudClip[1] / cw
+        if (ndcX < -1.2f || ndcX > 1.2f || ndcY < -1.2f || ndcY > 1.2f) return false
+        out[outOffset] = (ndcX + 1f) * 0.5f * viewW
+        out[outOffset + 1] = (1f - ndcY) * 0.5f * viewH
+        return out[outOffset].isFinite() && out[outOffset + 1].isFinite()
+    }
+
+    private fun projectFaceMesh(frame: Frame, face: AugmentedFace, peek: FaceMeshPeekView) {
+        val view = peek
+        val w = view.width.toFloat()
+        val h = view.height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        val camera = frame.camera
+        if (camera.trackingState != TrackingState.TRACKING) {
+            peek.clear()
+            return
+        }
+        camera.getViewMatrix(hudViewMtx, 0)
+        camera.getProjectionMatrix(hudProjMtx, 0, 0.05f, 4f)
+        Matrix.multiplyMM(hudVpMtx, 0, hudProjMtx, 0, hudViewMtx, 0)
+
+        val verts = face.meshVertices
+        val indices = face.meshTriangleIndices
+        val pose = face.centerPose
+        val savedV = verts.position()
+        val savedI = indices.position()
+        try {
+            verts.position(0)
+            indices.position(0)
+            val vertTotal = verts.remaining() / 3
+            val maxV = FaceMeshPeekView.MAX_VERTS
+            java.util.Arrays.fill(faceProjected, -1)
+            var drawnV = 0
+            var vi = 0
+            while (vi < vertTotal && vi < faceProjected.size && drawnV < maxV) {
+                faceLocal[0] = verts.get()
+                faceLocal[1] = verts.get()
+                faceLocal[2] = verts.get()
+                pose.transformPoint(faceLocal, 0, faceWorld, 0)
+                if (projectPointToView(
+                        faceWorld[0],
+                        faceWorld[1],
+                        faceWorld[2],
+                        w,
+                        h,
+                        faceVertScratch,
+                        drawnV * 2,
+                    )
+                ) {
+                    faceProjected[vi] = drawnV
+                    drawnV++
+                }
+                vi++
+            }
+            val triCount = indices.remaining() / 3
+            val triStride = if (triCount <= FaceMeshPeekView.MAX_LINES / 3) {
+                1
+            } else {
+                (triCount * 3 / FaceMeshPeekView.MAX_LINES).coerceAtLeast(1)
+            }
+            var drawnL = 0
+            var ti = 0
+            while (ti < triCount && drawnL < FaceMeshPeekView.MAX_LINES) {
+                val a = indices.get().toInt() and 0xFFFF
+                val b = indices.get().toInt() and 0xFFFF
+                val c = indices.get().toInt() and 0xFFFF
+                if (ti % triStride == 0) {
+                    val pa = if (a < faceProjected.size) faceProjected[a] else -1
+                    val pb = if (b < faceProjected.size) faceProjected[b] else -1
+                    val pc = if (c < faceProjected.size) faceProjected[c] else -1
+                    if (pa >= 0 && pb >= 0) {
+                        packLine(pa, pb, drawnL)
+                        drawnL++
+                    }
+                    if (drawnL < FaceMeshPeekView.MAX_LINES && pb >= 0 && pc >= 0) {
+                        packLine(pb, pc, drawnL)
+                        drawnL++
+                    }
+                    if (drawnL < FaceMeshPeekView.MAX_LINES && pc >= 0 && pa >= 0) {
+                        packLine(pc, pa, drawnL)
+                        drawnL++
+                    }
+                }
+                ti++
+            }
+            var drawnM = 0
+            for (region in faceRegions) {
+                if (drawnM >= FaceMeshPeekView.MAX_LANDMARKS) break
+                val regionPose = face.getRegionPose(region)
+                if (projectPointToView(
+                        regionPose.tx(),
+                        regionPose.ty(),
+                        regionPose.tz(),
+                        w,
+                        h,
+                        faceLandmarkScratch,
+                        drawnM * 2,
+                    )
+                ) {
+                    drawnM++
+                }
+            }
+            peek.setMesh(
+                faceVertScratch,
+                drawnV,
+                faceLineScratch,
+                drawnL,
+                faceLandmarkScratch,
+                drawnM,
+                locked = true,
+                vertTotal = vertTotal,
+            )
+        } catch (_: Exception) {
+            // Mesh buffers can be unavailable for a frame.
+        } finally {
+            try {
+                verts.position(savedV)
+                indices.position(savedI)
+            } catch (_: Exception) {
+                // Buffer already released with the frame.
+            }
+        }
+    }
+
+    private fun packLine(from: Int, to: Int, lineIndex: Int) {
+        val dst = lineIndex * 4
+        val ax = faceVertScratch[from * 2]
+        val ay = faceVertScratch[from * 2 + 1]
+        val bx = faceVertScratch[to * 2]
+        val by = faceVertScratch[to * 2 + 1]
+        faceLineScratch[dst] = ax
+        faceLineScratch[dst + 1] = ay
+        faceLineScratch[dst + 2] = bx
+        faceLineScratch[dst + 3] = by
+    }
+
+    private fun destroyFaceContent() {
+        faceNoseMarker?.let { marker ->
+            try {
+                marker.parent?.removeChildNode(marker)
+            } catch (_: Exception) {
+                // Already detached.
+            }
+        }
+        faceNoseMarker = null
+        faceNoseNode?.let { node ->
+            try {
+                arSceneView?.removeChildNode(node)
+            } catch (_: Exception) {
+                try {
+                    node.parent?.removeChildNode(node)
+                } catch (_: Exception) {
+                    // Already detached.
+                }
+            }
+            try {
+                node.destroy()
+            } catch (_: Exception) {
+                // Engine may already be tearing down.
+            }
+        }
+        faceNoseNode = null
+        faceMeshTick = 0
+        placed = false
+    }
+
+    private fun updateImageTarget(sceneView: ARSceneView, frame: Frame) {
+        if (placed) return
+        if (frame.camera.trackingState != TrackingState.TRACKING) return
+        val image = findTrackedImage(sceneView, frame)
+        if (image == null) {
+            if (surfaceFound) surfaceFound = false
+            return
+        }
+        if (!surfaceFound) {
+            surfaceFound = true
+            notifyTracking("ready", "Marker locked")
+        }
+        placeModelOnImage(sceneView, image)
+    }
+
+    private fun placeModelOnImage(sceneView: ARSceneView, image: AugmentedImage): Boolean {
+        if (placed) return true
+        val instance = loadedModelInstance ?: return false
+        val node = obtainModelNode(instance, forceMatte = false)
+        val newAnchor = AnchorNode(sceneView.engine, image.createAnchor(image.centerPose))
+        newAnchor.addChildNode(node)
+        sceneView.addChildNode(newAnchor)
+        anchorNode = newAnchor
+        placed = true
+        cancelPlaneReveal()
+        sceneView.planeRenderer.isVisible = false
+        sceneView.planeRenderer.isEnabled = false
+        startEmergence()
+        faceCamera()
+        notifyListeners("placed", JSObject())
+        return true
     }
 
     private fun isHorizontalPlaneHit(hit: HitResult): Boolean {
@@ -1027,6 +1693,23 @@ class NativeArPlugin : Plugin() {
         if (loadedModelInstance == null) {
             out.put("placed", false)
             out.put("error", "no-model")
+            return out
+        }
+        if (imagePlacementMode) {
+            val frame = sceneView.frame
+            val image = if (frame != null) findTrackedImage(sceneView, frame) else null
+            if (image == null || !placeModelOnImage(sceneView, image)) {
+                out.put("placed", false)
+                out.put("error", "no-marker")
+                return out
+            }
+            out.put("placed", true)
+            out.put("error", JSONObject.NULL)
+            return out
+        }
+        if (facePlacementMode) {
+            out.put("placed", false)
+            out.put("error", "face-mode")
             return out
         }
         val hit = hitAt(sceneView, x, y)
@@ -1207,7 +1890,7 @@ class NativeArPlugin : Plugin() {
     }
 
     private fun moveModelAtScreen(x: Float, y: Float, sceneView: ARSceneView): Boolean {
-        if (!placed || emergeAnimator != null) return false
+        if (imagePlacementMode || facePlacementMode || !placed || emergeAnimator != null) return false
         val node = modelNode ?: return false
         val hit = hitAt(sceneView, x, y) ?: return false
         anchorNode?.let { oldAnchor ->
@@ -1658,6 +2341,30 @@ class NativeArPlugin : Plugin() {
         cancelScaleSmoothing()
         clearPlacement(keepModel = false)
         loadedModelInstance = null
+        featurePointHudView?.let { hud ->
+            (hud.parent as? ViewGroup)?.removeView(hud)
+        }
+        featurePointHudView = null
+        depthPeekView?.let { peek ->
+            (peek.parent as? ViewGroup)?.removeView(peek)
+            peek.release()
+        }
+        depthPeekView = null
+        lightEstimateHudView?.let { chip ->
+            (chip.parent as? ViewGroup)?.removeView(chip)
+        }
+        lightEstimateHudView = null
+        lightEstimateTick = 0
+        faceMeshPeekView?.let { peek ->
+            (peek.parent as? ViewGroup)?.removeView(peek)
+        }
+        faceMeshPeekView = null
+        destroyFaceContent()
+        depthPeekPixels = null
+        depthModeActive = false
+        depthModeResolved = false
+        depthPeekTick = 0
+        depthPeekHidden = false
         arSceneView?.let { view ->
             destroyPlaneGridTexture(view.engine)
             safeDestroySceneView(view)
