@@ -32,6 +32,7 @@ export interface ArSessionController {
 type Runtime = {
   mode: ArMode;
   nativePlacementMode: NativeArPlacementMode;
+  lightEstimateViz: boolean;
   xrSession: XRSession | null;
   webxr: WebXrViewerHandle | null;
   orbit: OrbitViewerHandle | null;
@@ -95,17 +96,28 @@ export async function initGate(store: AppStateStore): Promise<void> {
 async function startSession(
   store: AppStateStore,
   uiRoot: HTMLElement,
-  options?: { nativePlacementMode?: NativeArPlacementMode },
+  options?: {
+    nativePlacementMode?: NativeArPlacementMode;
+    lightEstimateViz?: boolean;
+  },
 ): Promise<ArSessionController> {
   const mode = await prepareArMode();
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     .matches;
   const nativePlacementMode: NativeArPlacementMode =
     options?.nativePlacementMode ?? "plane";
+  const lightEstimateViz =
+    options?.lightEstimateViz === true && nativePlacementMode !== "image";
 
   if (nativePlacementMode === "image" && mode !== "native") {
     throw new Error(
       "Image-target placement needs the Capacitor Android app with ARCore.",
+    );
+  }
+
+  if (lightEstimateViz && (!isCapacitorAndroid() || mode !== "native")) {
+    throw new Error(
+      "Light-estimate viz needs the Capacitor Android app with ARCore.",
     );
   }
 
@@ -168,6 +180,7 @@ async function startSession(
       reducedMotion,
       asset: store.selectedAsset,
       placementMode: nativePlacementMode,
+      lightEstimateViz,
     });
     if (!started.ok) throw new Error(started.error);
 
@@ -237,11 +250,13 @@ async function startSession(
       },
     },
     nativePlacementMode,
+    lightEstimateViz,
   );
 
   runtime = {
     mode,
     nativePlacementMode,
+    lightEstimateViz,
     xrSession,
     webxr,
     orbit,
@@ -381,16 +396,20 @@ export function bindStoreActions(
       case "try-ar": {
         const topicId = store.learnTopicId;
         const markerDemo = topicId === "kind-marker";
-        if (markerDemo) {
+        const lightDemo = topicId === "kind-light";
+        if (markerDemo || lightDemo) {
           const androidNative =
             isCapacitorAndroid() && (await isNativeArSupported());
           if (!androidNative) {
             store.patch({
               showLearn: false,
               learnTopicId: null,
-              gateTitle: "Marker demo needs Android",
-              gateBody:
-                "Image-target placement uses ARCore Augmented Images in the Capacitor Android app. Print /markers/deez_image_target.png about 16 cm (6 in) wide on matte paper, then Try in AR from the installed app — not the browser, WebXR, or iOS in this build.",
+              gateTitle: lightDemo
+                ? "Light demo needs Android"
+                : "Marker demo needs Android",
+              gateBody: lightDemo
+                ? "Light-estimate readout uses ARCore ambient intensity in the Capacitor Android app. Open How it works → Light estimation & shadows → Try in AR from the installed app — not the browser, WebXR, or iOS in this build. Home Start AR still uses a fixed Filament light."
+                : "Image-target placement uses ARCore Augmented Images in the Capacitor Android app. Print /markers/deez_image_target.png about 16 cm (6 in) wide on matte paper, then Try in AR from the installed app — not the browser, WebXR, or iOS in this build.",
               gateActionLabel: "Start AR",
               gateError: false,
             });
@@ -407,6 +426,7 @@ export function bindStoreActions(
           try {
             const controller = await startSession(store, uiRoot, {
               nativePlacementMode: markerDemo ? "image" : "plane",
+              lightEstimateViz: lightDemo,
             });
             setController(controller);
           } catch (error) {
@@ -474,6 +494,7 @@ export function bindStoreActions(
                 reducedMotion,
                 asset,
                 placementMode: current.nativePlacementMode,
+                lightEstimateViz: current.lightEstimateViz,
               });
               if (!started.ok) {
                 store.patch({ sessionError: started.error });

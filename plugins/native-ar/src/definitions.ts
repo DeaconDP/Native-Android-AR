@@ -24,6 +24,11 @@ export interface NativeArStartOptions {
    * to that image anchor. Android only in this build.
    */
   placementMode?: NativeArPlacementMode;
+  /**
+   * ARCore ambient light-estimate teaching viz. Default false: plane/image
+   * labs keep a fixed Filament directional light. Android only in this build.
+   */
+  lightEstimateViz?: boolean;
 }
 
 export interface NativeArPointOptions {

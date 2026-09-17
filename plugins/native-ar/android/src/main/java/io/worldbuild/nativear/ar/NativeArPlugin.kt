@@ -41,6 +41,7 @@ import com.google.ar.core.Coordinates2d
 import com.google.ar.core.Frame
 import com.google.ar.core.HitResult
 import com.google.ar.core.InstantPlacementPoint
+import com.google.ar.core.LightEstimate
 import com.google.ar.core.Plane
 import com.google.ar.core.PointCloud
 import com.google.ar.core.Pose
@@ -98,6 +99,10 @@ class NativeArPlugin : Plugin() {
     private var featurePointHudEnabled = true
     private var depthPeekView: DepthPeekView? = null
     private var depthPeekEnabled = true
+    private var lightEstimateHudView: LightEstimateHudView? = null
+    private var lightEstimateVizEnabled = false
+    private var lightEstimateTick = 0
+    private val lightColorScratch = FloatArray(4)
     private var depthModeActive = false
     private var depthModeResolved = false
     private var depthPeekTick = 0
@@ -188,6 +193,12 @@ class NativeArPlugin : Plugin() {
         /** User pinch range — free feel with hard stops at the ends. */
         private const val SCALE_MIN = 0.2f
         private const val SCALE_MAX = 5f
+        /** Fixed Filament directional intensity for the plane lab. */
+        private const val MAIN_LIGHT_INTENSITY = 100_000f
+        /** Typical indoor ARCore pixel intensity used to map estimate → lux. */
+        private const val LIGHT_REF_PIXEL = 0.4f
+        private const val LIGHT_INTENSITY_MIN = 12_000f
+        private const val LIGHT_INTENSITY_MAX = 180_000f
     }
 
     /** org.json / Capacitor JSObject forbids NaN/Inf in resolve payloads. */
@@ -232,7 +243,9 @@ class NativeArPlugin : Plugin() {
         reducedMotion = call.getBoolean("reducedMotion") ?: false
         imagePlacementMode = (call.getString("placementMode") ?: "plane")
             .equals("image", ignoreCase = true)
-        if (imagePlacementMode) {
+        lightEstimateVizEnabled = !imagePlacementMode &&
+            (call.getBoolean("lightEstimateViz") ?: false)
+        if (imagePlacementMode || lightEstimateVizEnabled) {
             featurePointHudEnabled = false
             depthPeekEnabled = false
         } else {
@@ -563,7 +576,11 @@ class NativeArPlugin : Plugin() {
             sceneView.configureSession { session, config ->
                 config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                 config.focusMode = Config.FocusMode.AUTO
-                config.lightEstimationMode = Config.LightEstimationMode.DISABLED
+                config.lightEstimationMode = if (lightEstimateVizEnabled) {
+                    Config.LightEstimationMode.AMBIENT_INTENSITY
+                } else {
+                    Config.LightEstimationMode.DISABLED
+                }
                 if (imagePlacementMode) {
                     ImageTargetSupport.applyToConfig(session, config, activity.assets)
                     depthModeActive = false
@@ -588,21 +605,7 @@ class NativeArPlugin : Plugin() {
             if (sceneView.mainLightNode == null) {
                 sceneView.mainLightNode = SceneView.DefaultLightNode(sceneView.engine)
             }
-            val lightDirection = run {
-                val x = -0.5f
-                val y = -1f
-                val z = -0.8f
-                val length = sqrt(x * x + y * y + z * z)
-                Direction(x / length, y / length, z / length)
-            }
-            sceneView.mainLightNode?.let { light ->
-                light.intensity = 100_000f
-                light.lightDirection = lightDirection
-            }
-            sceneView.mainLightEstimatedNode?.let { light ->
-                light.intensity = 100_000f
-                light.lightDirection = lightDirection
-            }
+            applyFixedMainLight(sceneView)
 
             sceneView.onSessionUpdated = { _, frame ->
                 if (!sessionFrameReceived) {
@@ -616,6 +619,9 @@ class NativeArPlugin : Plugin() {
                 }
                 featurePointHudView?.let { updateFeaturePointHud(frame, it) }
                 depthPeekView?.let { updateDepthPeek(frame, it) }
+                if (lightEstimateVizEnabled) {
+                    updateLightEstimate(sceneView, frame)
+                }
                 when (frame.camera.trackingState) {
                     TrackingState.TRACKING -> {
                         if (imagePlacementMode) {
@@ -652,6 +658,12 @@ class NativeArPlugin : Plugin() {
                 val peek = DepthPeekView(activity)
                 webParent.addView(peek, overlayAt, params)
                 depthPeekView = peek
+                overlayAt++
+            }
+            if (lightEstimateVizEnabled) {
+                val chip = LightEstimateHudView(activity)
+                webParent.addView(chip, overlayAt, params)
+                lightEstimateHudView = chip
             }
             webView.bringToFront()
             materialLoader = MaterialLoader(sceneView.engine, activity)
@@ -1041,6 +1053,69 @@ class NativeArPlugin : Plugin() {
         if (engine != null) {
             engine.safeDestroyTexture(texture)
         }
+    }
+
+    private fun defaultLightDirection(): Direction {
+        val x = -0.5f
+        val y = -1f
+        val z = -0.8f
+        val length = sqrt(x * x + y * y + z * z)
+        return Direction(x / length, y / length, z / length)
+    }
+
+    private fun applyFixedMainLight(sceneView: ARSceneView) {
+        val lightDirection = defaultLightDirection()
+        sceneView.mainLightNode?.let { light ->
+            light.intensity = MAIN_LIGHT_INTENSITY
+            light.lightDirection = lightDirection
+        }
+        sceneView.mainLightEstimatedNode?.let { light ->
+            light.intensity = MAIN_LIGHT_INTENSITY
+            light.lightDirection = lightDirection
+        }
+    }
+
+    private fun mapPixelToIntensity(pixel: Float): Float {
+        val safe = if (pixel.isFinite()) pixel.coerceAtLeast(0f) else LIGHT_REF_PIXEL
+        return (MAIN_LIGHT_INTENSITY * (safe / LIGHT_REF_PIXEL))
+            .coerceIn(LIGHT_INTENSITY_MIN, LIGHT_INTENSITY_MAX)
+    }
+
+    private fun updateLightEstimate(sceneView: ARSceneView, frame: Frame) {
+        val estimate = frame.lightEstimate
+        val valid = estimate.state == LightEstimate.State.VALID
+        var pixel = 0f
+        lightColorScratch[0] = 1f
+        lightColorScratch[1] = 1f
+        lightColorScratch[2] = 1f
+        lightColorScratch[3] = 1f
+        if (valid) {
+            pixel = estimate.pixelIntensity
+            try {
+                estimate.getColorCorrection(lightColorScratch, 0)
+            } catch (_: Exception) {
+                // Color correction is optional on this API.
+            }
+        }
+        val intensity = if (valid) mapPixelToIntensity(pixel) else MAIN_LIGHT_INTENSITY
+        val r = lightColorScratch[0].coerceIn(0.15f, 3f)
+        val g = lightColorScratch[1].coerceIn(0.15f, 3f)
+        val b = lightColorScratch[2].coerceIn(0.15f, 3f)
+        val direction = defaultLightDirection()
+        sceneView.mainLightNode?.let { light ->
+            light.intensity = intensity
+            light.lightDirection = direction
+            light.color = SceneColor(r, g, b, 1f)
+        }
+        sceneView.mainLightEstimatedNode?.let { light ->
+            light.intensity = intensity
+            light.lightDirection = direction
+            light.color = SceneColor(r, g, b, 1f)
+        }
+
+        lightEstimateTick += 1
+        if (lightEstimateTick % LightEstimateHudView.FRAME_STRIDE != 0) return
+        lightEstimateHudView?.setReadout(valid, pixel, intensity, lightColorScratch)
     }
 
     private fun updateFeaturePointHud(frame: Frame, hud: FeaturePointHudView) {
@@ -1940,6 +2015,11 @@ class NativeArPlugin : Plugin() {
             peek.release()
         }
         depthPeekView = null
+        lightEstimateHudView?.let { chip ->
+            (chip.parent as? ViewGroup)?.removeView(chip)
+        }
+        lightEstimateHudView = null
+        lightEstimateTick = 0
         depthPeekPixels = null
         depthModeActive = false
         depthModeResolved = false

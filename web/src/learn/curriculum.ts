@@ -514,8 +514,9 @@ export const LEARN_TOPICS: LearnTopic[] = [
     id: "kind-light",
     section: "kinds",
     title: "Light estimation & shadows",
-    summary: "Match virtual lighting to the room — fixed light in this demo for clarity.",
-    status: "explained",
+    summary:
+      "Android live: ARCore ambient intensity drives Filament light plus a HUD readout.",
+    status: "live",
     sections: [
       {
         heading: "What it is",
@@ -524,9 +525,11 @@ export const LEARN_TOPICS: LearnTopic[] = [
         ],
       },
       {
-        heading: "In this app",
+        heading: "Try it",
         paragraphs: [
-          "The educational native path keeps a predictable Filament directional light. A light-estimate readout viz is roadmapped for Phase 3 so you can contrast fixed vs estimated lighting.",
+          "On the Capacitor Android app, open How it works → Light estimation & shadows → Try in AR. That starts the floor-plane lab with lightEstimateViz on — ARCore AMBIENT_INTENSITY updates the Filament directional light each frame, and a Light chip shows live pixel intensity, RGB correction, and the mapped ~k intensity. Home Start AR still uses the fixed directional light so the default lab stays predictable.",
+          "Cover and uncover the camera or walk from shade into brighter light: the model should dim/brighten with the chip. Feature-point and depth overlays stay off so the lighting lesson stays readable. The chip stays up after you place.",
+          "Browser, WebXR, and iOS do not run this demo yet. Try in AR on those surfaces explains that you need the Android app. iOS ARKit light estimate is deferred. This is a teaching readout, not shadow maps or environment-probe baking.",
         ],
       },
     ],
@@ -676,6 +679,7 @@ export function coachForMilestone(
   mode: string,
   milestone: CoachMilestone,
   placement: "plane" | "image" = "plane",
+  lightEstimateViz = false,
 ): { text: string; topicId: LearnTopicId } {
   if (mode === "orbit" || milestone === "orbit") {
     return {
@@ -709,6 +713,35 @@ export function coachForMilestone(
         return {
           text: "Point camera at the marker · Learn: kind-marker",
           topicId: "kind-marker",
+        };
+    }
+  }
+  if (lightEstimateViz) {
+    switch (milestone) {
+      case "scan":
+        return {
+          text: "Scan a surface — Light chip tracks camera intensity · Learn: kind-light",
+          topicId: "kind-light",
+        };
+      case "ready":
+        return {
+          text: "Tap to place — cover the lens and watch the Light chip · Learn: kind-light",
+          topicId: "kind-light",
+        };
+      case "placed":
+        return {
+          text: "Cover/uncover camera — model lighting follows · Learn: kind-light",
+          topicId: "kind-light",
+        };
+      case "gesture":
+        return {
+          text: "Open Learn — fixed vs estimated light · Learn: kind-light",
+          topicId: "kind-light",
+        };
+      default:
+        return {
+          text: "Watch the Light chip while you scan · Learn: kind-light",
+          topicId: "kind-light",
         };
     }
   }

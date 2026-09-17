@@ -56,6 +56,7 @@ function updateHint(
   onHint: (h: string, topicId: string) => void,
   gestured = false,
   placement: NativeArPlacementMode = "plane",
+  lightEstimateViz = false,
 ): void {
   let milestone: CoachMilestone;
   if (mode === "orbit") milestone = "orbit";
@@ -63,7 +64,7 @@ function updateHint(
   else if (gestured) milestone = "gesture";
   else milestone = "placed";
 
-  const coach = coachForMilestone(mode, milestone, placement);
+  const coach = coachForMilestone(mode, milestone, placement, lightEstimateViz);
   onHint(coach.text, coach.topicId);
 }
 
@@ -76,6 +77,7 @@ export function mountSessionGestures(
   },
   callbacks: SessionUiCallbacks,
   nativePlacement: NativeArPlacementMode = "plane",
+  lightEstimateViz = false,
 ): SessionUiController {
   const cameraAr = mode === "native" || mode === "webxr";
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -111,7 +113,17 @@ export function mountSessionGestures(
     }, ms);
   };
 
-  updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured, nativePlacement);
+  const pushHint = () =>
+    updateHint(
+      mode,
+      placed,
+      surfaceReady,
+      callbacks.onHint,
+      gestured,
+      nativePlacement,
+      lightEstimateViz,
+    );
+  pushHint();
 
   const listPointers = () => [...pointers.values()];
   const centroidOf = (pts: Ptr[]) => {
@@ -130,7 +142,7 @@ export function mountSessionGestures(
     if (!placed || learnNudgeSent) return;
     gestured = true;
     learnNudgeSent = true;
-    updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured, nativePlacement);
+    pushHint();
   };
 
   const applyRotate = (dx: number, dy: number) => {
@@ -316,7 +328,7 @@ export function mountSessionGestures(
             beginSpawnLock();
             callbacks.onPlaced();
             callbacks.onError(null);
-            updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured, nativePlacement);
+            pushHint();
           } else {
             callbacks.onError("Scan a flat surface, then tap the highlighted area.");
           }
@@ -351,7 +363,7 @@ export function mountSessionGestures(
         else backends.webxr?.reposition();
         placed = false;
         scale = 1;
-        updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured, nativePlacement);
+        pushHint();
         break;
       case "recenter":
         if (mode === "native") void nativeRecenter();
@@ -364,7 +376,7 @@ export function mountSessionGestures(
             if (ok) {
               placed = true;
               callbacks.onPlaced();
-              updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured, nativePlacement);
+              pushHint();
             }
           });
         }
@@ -387,7 +399,7 @@ export function mountSessionGestures(
   return {
     setSurfaceReady(ready) {
       surfaceReady = ready;
-      updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured, nativePlacement);
+      pushHint();
     },
     setPlaced(next) {
       placed = next;
@@ -396,7 +408,7 @@ export function mountSessionGestures(
         gestured = false;
         learnNudgeSent = false;
       }
-      updateHint(mode, placed, surfaceReady, callbacks.onHint, gestured, nativePlacement);
+      pushHint();
     },
     getScale: () => scale,
     dispose() {

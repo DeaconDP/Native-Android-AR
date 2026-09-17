@@ -160,19 +160,26 @@ export async function startNativeAr(options?: {
   featurePointHud?: boolean;
   depthPeek?: boolean;
   placementMode?: NativeArPlacementMode;
+  lightEstimateViz?: boolean;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const asset = options?.asset ?? loadSelectedAsset();
   const placementMode: NativeArPlacementMode = options?.placementMode ?? "plane";
   const imageMode = placementMode === "image";
+  const lightEstimateViz = !imageMode && options?.lightEstimateViz === true;
   try {
     document.documentElement.classList.add("is-ar-native");
     document.body.classList.add("is-ar-native");
     await NativeAr.startSession({
       modelPath: nativeModelPath(asset),
       reducedMotion: options?.reducedMotion === true,
-      featurePointHud: imageMode ? false : (options?.featurePointHud ?? true),
-      depthPeek: imageMode ? false : (options?.depthPeek ?? true),
+      featurePointHud:
+        imageMode || lightEstimateViz
+          ? false
+          : (options?.featurePointHud ?? true),
+      depthPeek:
+        imageMode || lightEstimateViz ? false : (options?.depthPeek ?? true),
       placementMode,
+      lightEstimateViz,
     });
     return { ok: true };
   } catch (e) {

@@ -102,6 +102,7 @@ public class NativeArPlugin: CAPPlugin, CAPBridgedPlugin, ARSCNViewDelegate {
             call.reject("Image-target AR is Android-only in this build.")
             return
         }
+        // lightEstimateViz is Android-only in this build (ROADMAP Deferred).
         let begin = { [weak self] in
             DispatchQueue.main.async {
                 guard let self else { return }
