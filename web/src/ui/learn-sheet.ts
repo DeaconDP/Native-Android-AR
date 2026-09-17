@@ -1,7 +1,10 @@
 import {
   getLearnTopic,
-  LEARN_TOPICS,
+  LEARN_SECTIONS,
   MODE_LABELS,
+  STATUS_LABELS,
+  topicsForSection,
+  type LearnStatus,
   type LearnTopic,
 } from "../learn/curriculum";
 import type { ArMode } from "../native/arBridge";
@@ -20,15 +23,36 @@ function modeChip(arMode: ArMode | null | undefined): string {
   return `<p class="learn__mode">Your mode right now: <span>${escapeHtml(label)}</span></p>`;
 }
 
+function statusChip(status: LearnStatus): string {
+  const label = STATUS_LABELS[status];
+  return `<span class="learn__status learn__status--${escapeHtml(status)}">${escapeHtml(label)}</span>`;
+}
+
 function renderTopicList(arMode: ArMode | null | undefined): string {
-  const items = LEARN_TOPICS.map(
-    (topic) => `
+  const groups = LEARN_SECTIONS.map((section) => {
+    const topics = topicsForSection(section.id);
+    if (topics.length === 0) return "";
+    const items = topics
+      .map(
+        (topic) => `
       <button type="button" class="learn__item" data-action="learn-topic" data-learn-id="${escapeHtml(topic.id)}">
-        <span class="learn__item-title">${escapeHtml(topic.title)}</span>
+        <span class="learn__item-head">
+          <span class="learn__item-title">${escapeHtml(topic.title)}</span>
+          ${statusChip(topic.status)}
+        </span>
         <span class="learn__item-summary">${escapeHtml(topic.summary)}</span>
       </button>
     `,
-  ).join("");
+      )
+      .join("");
+    return `
+      <section class="learn__group" aria-labelledby="learn-sec-${escapeHtml(section.id)}">
+        <h3 class="learn__group-title" id="learn-sec-${escapeHtml(section.id)}">${escapeHtml(section.title)}</h3>
+        <p class="learn__group-blurb">${escapeHtml(section.blurb)}</p>
+        <div class="learn__list">${items}</div>
+      </section>
+    `;
+  }).join("");
 
   return `
     <div class="picker-backdrop learn-backdrop" data-action="close-learn">
@@ -38,16 +62,25 @@ function renderTopicList(arMode: ArMode | null | undefined): string {
           <button type="button" class="icon-btn" data-action="close-learn" aria-label="Close">✕</button>
         </header>
         ${modeChip(arMode)}
-        <p class="learn__intro">Short lessons on the real techniques this app uses — native SceneView/ARCore &amp; ARKit first, then WebXR and other fallbacks.</p>
-        <div class="learn__list">${items}</div>
+        <p class="learn__intro">Syllabus: this app’s live lab first, then kinds of AR and software stacks. Chips mark Live demo, Explained, or Roadmap.</p>
+        ${groups}
       </section>
     </div>
   `;
 }
 
+function tryInArButton(topic: LearnTopic, phase: "gate" | "ar"): string {
+  if (topic.status !== "live") return "";
+  if (phase === "ar") {
+    return `<button type="button" class="btn btn--secondary learn__try" data-action="close-learn">Back to AR</button>`;
+  }
+  return `<button type="button" class="btn btn--secondary learn__try" data-action="try-ar">Try in AR</button>`;
+}
+
 function renderArticle(
   topic: LearnTopic,
   arMode: ArMode | null | undefined,
+  phase: "gate" | "ar",
 ): string {
   const sections = topic.sections
     .map(
@@ -68,15 +101,16 @@ function renderArticle(
           <button type="button" class="icon-btn" data-action="close-learn" aria-label="Close">✕</button>
         </header>
         ${modeChip(arMode)}
+        <p class="learn__article-meta">${statusChip(topic.status)}</p>
         <h2 class="learn__article-title">${escapeHtml(topic.title)}</h2>
         <p class="learn__item-summary">${escapeHtml(topic.summary)}</p>
         <div class="learn__article-body">${sections}</div>
+        ${tryInArButton(topic, phase)}
       </section>
     </div>
   `;
 }
 
-/** Active mode for the chip: live session or gate probe on metrics. */
 export function resolveLearnMode(
   arMode: ArMode | null,
   metricsMode: ArMode | null | undefined,
@@ -88,9 +122,10 @@ export function renderLearnSheet(
   topicId: string | null,
   arMode: ArMode | null,
   metricsMode: ArMode | null | undefined,
+  phase: "gate" | "ar" = "gate",
 ): string {
   const mode = resolveLearnMode(arMode, metricsMode);
   const topic = getLearnTopic(topicId);
-  if (topic) return renderArticle(topic, mode);
+  if (topic) return renderArticle(topic, mode, phase);
   return renderTopicList(mode);
 }
