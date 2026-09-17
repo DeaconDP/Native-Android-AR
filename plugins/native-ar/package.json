@@ -1,0 +1,39 @@
+{
+  "name": "native-ar",
+  "version": "1.0.0",
+  "description": "Native ARKit/ARCore tap-to-place for Native-Android-AR",
+  "main": "dist/esm/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": [
+    "android/src/main/",
+    "android/build.gradle",
+    "android/proguard-rules.pro",
+    "dist/",
+    "ios/Sources",
+    "Package.swift",
+    "NativeAr.podspec",
+    "noop.js"
+  ],
+  "author": "worldbuild",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/core": "^8.4.2",
+    "typescript": "~5.7.3"
+  },
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    },
+    "android": {
+      "src": "android"
+    }
+  }
+}

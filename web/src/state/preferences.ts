@@ -1,22 +1,22 @@
-export type PlacementAsset = 'helmet' | 'cube' | 'sphere' | 'cylinder';
+import {
+  DEFAULT_PLACEMENT_ASSET,
+  isPlacementAsset,
+  type PlacementAsset,
+} from "./catalog";
 
-export type PlacementMode = 'floor' | 'wall';
+export type { PlacementAsset } from "./catalog";
+export { ASSET_LABELS, DEFAULT_PLACEMENT_ASSET } from "./catalog";
 
-const ASSET_KEY = 'native_ar_placement_asset';
+export type PlacementMode = "floor" | "wall";
 
-export const ASSET_LABELS: Record<PlacementAsset, string> = {
-  helmet: 'Helmet (GLB)',
-  cube: 'Cube',
-  sphere: 'Sphere',
-  cylinder: 'Cylinder',
-};
+const ASSET_KEY = "native_ar_placement_asset";
 
 export function loadSelectedAsset(): PlacementAsset {
   const stored = localStorage.getItem(ASSET_KEY);
-  if (stored === 'helmet' || stored === 'cube' || stored === 'sphere' || stored === 'cylinder') {
+  if (stored && isPlacementAsset(stored)) {
     return stored;
   }
-  return 'helmet';
+  return DEFAULT_PLACEMENT_ASSET;
 }
 
 export function saveSelectedAsset(asset: PlacementAsset): void {

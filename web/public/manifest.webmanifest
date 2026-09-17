@@ -1,6 +1,6 @@
 {
-  "name": "Native AR",
-  "short_name": "Native AR",
+  "name": "Deez-Native AR",
+  "short_name": "Deez-Native",
   "description": "WebXR tap-to-place AR with floor and wall placement",
   "start_url": "/",
   "scope": "/",

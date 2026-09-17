@@ -1,0 +1,33 @@
+{
+  "name": "native-android-ar",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev --prefix web",
+    "build": "npm run build --prefix web",
+    "build:native-ar": "npm run build --prefix plugins/native-ar",
+    "normalize:models": "node scripts/make-cube-glb.mjs && node scripts/normalize-ar-glb.mjs",
+    "normalize:helmet": "npm run normalize:models",
+    "cap:sync": "npm run build:native-ar && npm run build && npx cap sync",
+    "cap:android": "npx cap open android",
+    "cap:ios": "npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/browser": "^8.0.4",
+    "@capacitor/core": "^8.4.2",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.4.2",
+    "@capacitor/status-bar": "^8.0.3",
+    "native-ar": "file:plugins/native-ar"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.2",
+    "@gltf-transform/core": "^4.2.1",
+    "@gltf-transform/extensions": "^4.2.1",
+    "@gltf-transform/functions": "^4.2.1",
+    "typescript": "^5.7.3"
+  }
+}

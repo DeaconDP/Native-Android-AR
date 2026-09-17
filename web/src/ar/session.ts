@@ -1,228 +1,267 @@
-import * as THREE from 'three';
-import { createReticle, placeAtHit, updateReticle } from './placement';
-import { pickHitResult } from './hit-test';
-import { AnchorManager } from '../scene/anchors';
-import type { AppStateStore } from '../state/app-state';
-import { saveSelectedAsset } from '../state/preferences';
-import { assessWebXrCapability, formatSessionStartError } from './capabilities';
+import type { AppStateStore } from "../state/app-state";
+import {
+  isPlacementAsset,
+  type PlacementAsset,
+} from "../state/catalog";
+import { saveSelectedAsset } from "../state/preferences";
+import {
+  exitAr,
+  NativeAr,
+  nativeReposition,
+  openChromeArHandoff,
+  prepareArMode,
+  startNativeAr,
+  startWebXrAr,
+  stopNativeAr,
+  tryQuickLookAr,
+  webModelUrl,
+  type ArMode,
+} from "../native/arBridge";
+import { createOrbitViewer, type OrbitViewerHandle } from "./orbit-viewer";
+import { createWebXrViewer, type WebXrViewerHandle } from "./webxr-viewer";
+import { mountSessionGestures, type SessionUiController } from "./session-ui";
 
 export interface ArSessionController {
   end: () => Promise<void>;
   clearAll: () => void;
 }
 
-export async function checkWebXrSupport(): Promise<boolean> {
-  const capability = await assessWebXrCapability();
-  return capability.ok;
+type Runtime = {
+  mode: ArMode;
+  xrSession: XRSession | null;
+  webxr: WebXrViewerHandle | null;
+  orbit: OrbitViewerHandle | null;
+  gestures: SessionUiController | null;
+  trackingUnsub: (() => void) | null;
+  stage: HTMLElement | null;
+};
+
+let runtime: Runtime | null = null;
+
+function ensureStage(uiRoot: HTMLElement): HTMLElement {
+  let stage = uiRoot.querySelector<HTMLElement>(".ar-stage");
+  if (!stage) {
+    stage = document.createElement("div");
+    stage.className = "ar-stage";
+    uiRoot.appendChild(stage);
+  }
+  return stage;
 }
 
-export async function startArSession(
-  store: AppStateStore,
-  uiRoot: HTMLElement,
-): Promise<ArSessionController> {
-  const capability = await assessWebXrCapability();
-  if (!capability.ok) {
-    throw new Error(capability.body);
+async function tearDownRuntime(): Promise<void> {
+  if (!runtime) return;
+  const current = runtime;
+  runtime = null;
+  current.gestures?.dispose();
+  current.trackingUnsub?.();
+  current.orbit?.dispose();
+  if (current.webxr) {
+    await current.webxr.dispose();
+  } else if (current.mode === "native") {
+    await exitAr(null);
+  } else if (current.xrSession) {
+    await exitAr(current.xrSession);
   }
-
-  if (!navigator.xr) {
-    throw new Error('WebXR not available');
-  }
-
-  let session: XRSession;
-  try {
-    session = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: [
-        'dom-overlay',
-        'plane-detection',
-        'anchors',
-        'light-estimation',
-        'depth-sensing',
-      ],
-      domOverlay: { root: uiRoot },
-    });
-  } catch (error) {
-    throw new Error(formatSessionStartError(error));
-  }
-
-  const anchorsSupported = session.enabledFeatures?.includes('anchors') ?? false;
-  const depthSupported = session.enabledFeatures?.includes('depth-sensing') ?? false;
-  const lightEstimation = session.enabledFeatures?.includes('light-estimation') ?? false;
-
-  store.patch({
-    phase: 'ar',
-    trackingBanner: 'Move your phone to detect surfaces',
-  });
-  store.patchMetrics({
-    depthSupported,
-    lightEstimation,
-    anchorsSupported,
-  });
-
-  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.xr.enabled = true;
-  renderer.xr.setReferenceSpaceType('local');
-  document.body.appendChild(renderer.domElement);
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera();
-
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
-
-  const anchorManager = new AnchorManager();
-  const reticle = createReticle();
-  scene.add(reticle);
-
-  let hitTestSource: XRHitTestSource | null = null;
-
-  let frameCount = 0;
-  let lastFpsTime = performance.now();
-  let fps = 0;
-
-  const clearAll = () => {
-    anchorManager.clear(scene);
-    store.patch({ placedCount: 0 });
-  };
-
-  session.addEventListener('end', () => {
-    clearAll();
-    renderer.setAnimationLoop(null);
-    hitTestSource?.cancel();
-    renderer.dispose();
-    renderer.domElement.remove();
-    store.patch({
-      phase: 'gate',
-      trackingBanner: null,
-      gateTitle: 'Native AR',
-      gateBody: 'Session ended. Tap Start AR to try again.',
-      gateActionLabel: 'Start AR',
-      gateError: false,
-    });
-  });
-
-  const onSelect = async () => {
-    if (!hitTestSource || !reticle.visible) return;
-
-    const frame = renderer.xr.getFrame();
-    const referenceSpace = renderer.xr.getReferenceSpace();
-    if (!frame || !referenceSpace) return;
-
-    const results = frame.getHitTestResults(hitTestSource);
-    const hit = pickHitResult(results, store.placementMode, referenceSpace);
-    if (!hit) return;
-
-    const group = await placeAtHit(
-      hit,
-      referenceSpace,
-      scene,
-      store.selectedAsset,
-      anchorManager,
-      anchorsSupported,
-    );
-    if (group) {
-      store.patch({ placedCount: anchorManager.count, trackingBanner: null });
-    }
-  };
-
-  session.addEventListener('select', onSelect);
-
-  if (!session.requestHitTestSource) {
-    await session.end();
-    renderer.domElement.remove();
-    renderer.dispose();
-    throw new Error('Hit test is not supported in this WebXR session.');
-  }
-
-  const viewerSpace = await session.requestReferenceSpace('viewer');
-  hitTestSource = (await session.requestHitTestSource({ space: viewerSpace })) ?? null;
-  if (!hitTestSource) {
-    await session.end();
-    renderer.domElement.remove();
-    renderer.dispose();
-    throw new Error('Hit testing unavailable on this device');
-  }
-
-  const onFrame = (_time: number, frame: XRFrame) => {
-    const referenceSpace = renderer.xr.getReferenceSpace();
-    if (!referenceSpace) return;
-
-    frameCount += 1;
-    const now = performance.now();
-    if (now - lastFpsTime >= 1000) {
-      fps = frameCount;
-      frameCount = 0;
-      lastFpsTime = now;
-    }
-
-    anchorManager.updateFromFrame(frame, referenceSpace);
-    const hasValidHit = updateReticle(
-      frame,
-      referenceSpace,
-      hitTestSource,
-      reticle,
-      store.placementMode,
-    );
-
-    const pose = frame.getViewerPose(referenceSpace);
-    let cameraPosition = '—';
-    let cameraQuaternion = '—';
-    if (pose) {
-      const pos = pose.transform.position;
-      const ori = pose.transform.orientation;
-      cameraPosition = `${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}`;
-      cameraQuaternion = `${ori.x.toFixed(2)}, ${ori.y.toFixed(2)}, ${ori.z.toFixed(2)}, ${ori.w.toFixed(2)}`;
-    }
-
-    store.patchMetrics({
-      fps,
-      anchorCount: anchorManager.count,
-      hasValidHit,
-      cameraPosition,
-      cameraQuaternion,
-      placementMode: store.placementMode,
-      selectedAsset: store.selectedAsset,
-    });
-
-    store.patch({
-      placedCount: anchorManager.count,
-      trackingBanner: hasValidHit ? null : 'Move your phone to detect surfaces',
-    });
-
-    renderer.render(scene, camera);
-  };
-
-  renderer.setAnimationLoop(onFrame);
-  await renderer.xr.setSession(session);
-
-  return {
-    end: async () => {
-      await session.end();
-    },
-    clearAll,
-  };
+  current.stage?.remove();
 }
 
 export async function initGate(store: AppStateStore): Promise<void> {
-  const capability = await assessWebXrCapability();
-  if (!capability.ok) {
+  const mode = await prepareArMode();
+  const bodies: Record<ArMode, string> = {
+    native: "Mode: native (ARCore / ARKit). Tap How it works to learn the techniques, or Start AR to place.",
+    webxr: "Mode: WebXR. Tap How it works to learn the ladder, or Start AR to place.",
+    quicklook: "Mode: Quick Look. Tap How it works for the ladder, or Start AR to open it.",
+    chrome: "Mode: Chrome handoff. Tap How it works for why, or Start to open WebXR in Chrome.",
+    orbit: "Mode: orbit (no camera AR). Tap How it works for the ladder, or Start for 3D orbit.",
+  };
+  store.patch({
+    gateTitle: "Deez-Native AR",
+    gateBody: bodies[mode],
+    gateActionLabel: "Start AR",
+    gateError: false,
+    metrics: { ...store.metrics, arMode: mode },
+  });
+}
+
+async function startSession(
+  store: AppStateStore,
+  uiRoot: HTMLElement,
+): Promise<ArSessionController> {
+  const mode = await prepareArMode();
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    .matches;
+
+  if (mode === "quicklook") {
+    const ok = await tryQuickLookAr(store.selectedAsset);
+    if (!ok) {
+      throw new Error("Could not open AR Quick Look.");
+    }
     store.patch({
-      gateTitle: capability.title,
-      gateBody: capability.body,
-      gateActionLabel: null,
-      gateError: true,
+      phase: "gate",
+      gateTitle: "Quick Look",
+      gateBody: "AR Quick Look opened. Dismiss it to return here.",
+      gateActionLabel: "Start AR",
+      gateError: false,
     });
-    return;
+    return {
+      end: async () => undefined,
+      clearAll: () => undefined,
+    };
   }
 
+  if (mode === "chrome") {
+    const result = await openChromeArHandoff();
+    if (!result.ok) throw new Error(result.error);
+    store.patch({
+      phase: "gate",
+      gateTitle: "Opened in Chrome",
+      gateBody: "Continue AR in the Chrome tab, then return to this app.",
+      gateActionLabel: "Start AR",
+      gateError: false,
+    });
+    return {
+      end: async () => undefined,
+      clearAll: () => undefined,
+    };
+  }
+
+  await tearDownRuntime();
+  const stage = ensureStage(uiRoot);
+  stage.classList.toggle("ar-stage--native", mode === "native");
+  stage.classList.toggle("ar-stage--webxr", mode === "webxr");
+  stage.classList.toggle("ar-stage--orbit", mode === "orbit");
+
+  let xrSession: XRSession | null = null;
+  let webxr: WebXrViewerHandle | null = null;
+  let orbit: OrbitViewerHandle | null = null;
+  let trackingUnsub: (() => void) | null = null;
+
   store.patch({
-    gateTitle: 'Native AR',
-    gateBody: 'Tap to place objects on floors or walls using WebXR.',
-    gateActionLabel: 'Start AR',
-    gateError: false,
+    phase: "ar",
+    arMode: mode,
+    placedCount: 0,
+    surfaceReady: mode === "orbit",
+    sessionError: null,
+    trackingBanner: null,
   });
+
+  if (mode === "native") {
+    const started = await startNativeAr({
+      reducedMotion,
+      asset: store.selectedAsset,
+    });
+    if (!started.ok) throw new Error(started.error);
+
+    const handle = await NativeAr.addListener("trackingChanged", (event) => {
+      const ready = event.state === "ready";
+      store.patch({ surfaceReady: ready });
+      runtime?.gestures?.setSurfaceReady(ready);
+    });
+    trackingUnsub = () => {
+      void handle.remove();
+    };
+    const placedHandle = await NativeAr.addListener("placed", () => {
+      store.patch({ placedCount: 1 });
+      runtime?.gestures?.setPlaced(true);
+    });
+    const endedHandle = await NativeAr.addListener("sessionEnded", () => {
+      void endFromOutside(store);
+    });
+    const prevUnsub = trackingUnsub;
+    trackingUnsub = () => {
+      prevUnsub();
+      void placedHandle.remove();
+      void endedHandle.remove();
+    };
+  } else if (mode === "webxr") {
+    const started = await startWebXrAr(uiRoot);
+    if (!started.ok) throw new Error(started.error);
+    xrSession = started.session;
+    webxr = createWebXrViewer(stage, xrSession, webModelUrl(store.selectedAsset), {
+      reducedMotion,
+      onSurfaceReady: () => {
+        store.patch({ surfaceReady: true });
+        runtime?.gestures?.setSurfaceReady(true);
+      },
+      onPlaced: () => {
+        store.patch({ placedCount: 1 });
+        runtime?.gestures?.setPlaced(true);
+      },
+      onError: (message) => store.patch({ sessionError: message }),
+      onSessionEnd: () => {
+        void endFromOutside(store);
+      },
+    });
+  } else {
+    orbit = createOrbitViewer(stage, webModelUrl(store.selectedAsset), {
+      reducedMotion,
+      onReady: () => {
+        store.patch({ placedCount: 1, surfaceReady: true });
+        runtime?.gestures?.setPlaced(true);
+        runtime?.gestures?.setSurfaceReady(true);
+      },
+      onError: (message) => store.patch({ sessionError: message }),
+    });
+  }
+
+  const gestures = mountSessionGestures(
+    stage,
+    mode,
+    { webxr, orbit },
+    {
+      onPlaced: () => store.patch({ placedCount: 1 }),
+      onHint: (hint) => store.patch({ sessionHint: hint }),
+      onError: (message) => store.patch({ sessionError: message }),
+      onExit: () => {
+        void endFromOutside(store);
+      },
+    },
+  );
+
+  runtime = {
+    mode,
+    xrSession,
+    webxr,
+    orbit,
+    gestures,
+    trackingUnsub,
+    stage,
+  };
+
+  return {
+    end: async () => {
+      await tearDownRuntime();
+      store.patch({
+        phase: "gate",
+        arMode: null,
+        placedCount: 0,
+        surfaceReady: false,
+        sessionHint: null,
+        sessionError: null,
+        trackingBanner: null,
+      });
+      await initGate(store);
+    },
+    clearAll: () => {
+      if (mode === "native") void nativeReposition();
+      else webxr?.reposition();
+      store.patch({ placedCount: 0 });
+      gestures.setPlaced(false);
+    },
+  };
+}
+
+async function endFromOutside(store: AppStateStore): Promise<void> {
+  await tearDownRuntime();
+  store.patch({
+    phase: "gate",
+    arMode: null,
+    placedCount: 0,
+    surfaceReady: false,
+    sessionHint: null,
+    sessionError: null,
+  });
+  await initGate(store);
 }
 
 export function bindStoreActions(
@@ -231,69 +270,114 @@ export function bindStoreActions(
   getController: () => ArSessionController | null,
   setController: (controller: ArSessionController | null) => void,
 ): void {
-  uiRoot.addEventListener('click', async (event) => {
+  uiRoot.addEventListener("click", async (event) => {
     const target = event.target as HTMLElement;
-    const actionEl = target.closest<HTMLElement>('[data-action]');
+    const actionEl = target.closest<HTMLElement>("[data-action]");
     const action = actionEl?.dataset.action;
     if (!action) return;
 
     switch (action) {
-      case 'start-ar': {
-        if (store.phase === 'ar') return;
+      case "start-ar": {
+        if (store.phase === "ar" || store.isStarting) return;
         const button = actionEl as HTMLButtonElement;
         button.disabled = true;
-        button.setAttribute('aria-busy', 'true');
+        button.setAttribute("aria-busy", "true");
+        store.patch({ isStarting: true });
         try {
-          const controller = await startArSession(store, uiRoot);
+          const controller = await startSession(store, uiRoot);
           setController(controller);
         } catch (error) {
           store.patch({
-            gateTitle: 'Could not start AR',
-            gateBody: formatSessionStartError(error),
-            gateActionLabel: 'Try again',
+            gateTitle: "Could not start AR",
+            gateBody:
+              error instanceof Error ? error.message : "Unknown AR error",
+            gateActionLabel: "Try again",
             gateError: true,
-            phase: 'gate',
+            phase: "gate",
           });
         } finally {
+          store.patch({ isStarting: false });
           button.disabled = false;
-          button.removeAttribute('aria-busy');
+          button.removeAttribute("aria-busy");
         }
         break;
       }
-      case 'exit-ar': {
+      case "exit-ar": {
         const controller = getController();
         if (!controller) return;
         const button = actionEl as HTMLButtonElement;
         button.disabled = true;
-        button.setAttribute('aria-busy', 'true');
+        button.setAttribute("aria-busy", "true");
         try {
           await controller.end();
           setController(null);
         } finally {
           button.disabled = false;
-          button.removeAttribute('aria-busy');
+          button.removeAttribute("aria-busy");
         }
         break;
       }
-      case 'mode-floor':
-        store.patch({ placementMode: 'floor' });
+      case "mode-floor":
+        store.patch({ placementMode: "floor" });
         break;
-      case 'mode-wall':
-        store.patch({ placementMode: 'wall' });
+      case "mode-wall":
+        store.patch({ placementMode: "wall" });
         break;
-      case 'pick-model':
+      case "pick-model":
         store.patch({ showModelPicker: true });
         break;
-      case 'close-picker':
-        if (!target.closest('.picker__item')) {
+      case "close-picker":
+        if (!target.closest(".picker__item")) {
           store.patch({ showModelPicker: false });
         }
         break;
-      case 'toggle-debug':
+      case "open-learn":
+        store.patch({ showLearn: true, learnTopicId: null });
+        break;
+      case "close-learn": {
+        const inPanel = target.closest("[data-learn-panel]");
+        const isCloseBtn = Boolean(target.closest(".icon-btn"));
+        if (!inPanel || isCloseBtn) {
+          store.patch({ showLearn: false, learnTopicId: null });
+        }
+        break;
+      }
+      case "learn-back":
+        store.patch({ learnTopicId: null });
+        break;
+      case "learn-topic": {
+        const topicId = actionEl.dataset.learnId ?? null;
+        store.patch({ showLearn: true, learnTopicId: topicId });
+        break;
+      }
+      case "toggle-debug":
         store.patch({ debugEnabled: !store.debugEnabled });
         break;
-      case 'clear-all': {
+      case "clear-all": {
         const controller = getController();
+        // #region agent log
+        fetch("http://127.0.0.1:7709/ingest/69ce765a-960d-441f-925a-4fbdc6c1814e", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "53ab5c",
+          },
+          body: JSON.stringify({
+            sessionId: "53ab5c",
+            runId: "post-fix",
+            hypothesisId: "C",
+            location: "session.ts:clear-all",
+            message: "clear-all action",
+            data: {
+              hasController: Boolean(controller),
+              isClearing: store.isClearing,
+              placedCount: store.placedCount,
+              skipped: !controller || store.isClearing || store.placedCount === 0,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
         if (!controller || store.isClearing || store.placedCount === 0) return;
         store.patch({ isClearing: true });
         controller.clearAll();
@@ -302,10 +386,53 @@ export function bindStoreActions(
         break;
       }
       default:
-        if (action.startsWith('asset-')) {
-          const asset = action.replace('asset-', '') as typeof store.selectedAsset;
-          store.patch({ selectedAsset: asset, showModelPicker: false });
-          saveSelectedAsset(asset);
+        if (action.startsWith("asset-")) {
+          const raw = action.replace("asset-", "");
+          if (!isPlacementAsset(raw)) break;
+          const asset: PlacementAsset = raw;
+          const button = actionEl as HTMLButtonElement;
+          button.disabled = true;
+          button.setAttribute("aria-busy", "true");
+          try {
+            saveSelectedAsset(asset);
+            store.patch({
+              selectedAsset: asset,
+              showModelPicker: false,
+              sessionError: null,
+            });
+            const current = runtime;
+            if (!current) break;
+
+            if (current.mode === "orbit" && current.orbit) {
+              await current.orbit.setModel(webModelUrl(asset));
+              store.patch({ placedCount: 1, surfaceReady: true });
+              current.gestures?.setPlaced(true);
+              current.gestures?.setSurfaceReady(true);
+            } else if (current.mode === "webxr" && current.webxr) {
+              await current.webxr.setModel(webModelUrl(asset));
+              store.patch({ placedCount: 0 });
+              current.gestures?.setPlaced(false);
+            } else if (current.mode === "native") {
+              const reducedMotion = window.matchMedia(
+                "(prefers-reduced-motion: reduce)",
+              ).matches;
+              await stopNativeAr();
+              const started = await startNativeAr({
+                reducedMotion,
+                asset,
+              });
+              if (!started.ok) {
+                store.patch({ sessionError: started.error });
+                break;
+              }
+              store.patch({ placedCount: 0, surfaceReady: false });
+              current.gestures?.setPlaced(false);
+              current.gestures?.setSurfaceReady(false);
+            }
+          } finally {
+            button.disabled = false;
+            button.removeAttribute("aria-busy");
+          }
         }
         break;
     }

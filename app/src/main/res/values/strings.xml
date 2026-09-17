@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Native AR</string>
-    <string name="twa_fallback_message">Opening AR in Chrome. For full-screen TWA, verify Digital Asset Links for your host.</string>
-</resources>

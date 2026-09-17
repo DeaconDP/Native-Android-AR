@@ -1,17 +1,22 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+
+const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [
     basicSsl(),
     VitePWA({
       registerType: 'autoUpdate',
-      injectRegister: 'auto',
+      // Cap ships APK assets; auto-injected SW re-caches the previous UI after installDebug.
+      injectRegister: false,
       includeAssets: [
         'icons/icon-192.png',
         'icons/icon-512.png',
-        'models/helmet.glb',
+        'models/ATTRIBUTION.md',
         'manifest.webmanifest',
       ],
       manifest: false,
@@ -25,6 +30,11 @@ export default defineConfig({
       },
     }),
   ],
+  resolve: {
+    alias: {
+      'native-ar': path.resolve(rootDir, '../plugins/native-ar/dist/esm/index.js'),
+    },
+  },
   server: {
     port: 5187,
     strictPort: true,
@@ -38,5 +48,8 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+  },
+  optimizeDeps: {
+    exclude: ['native-ar'],
   },
 });

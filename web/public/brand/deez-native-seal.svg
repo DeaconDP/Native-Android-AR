@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-hidden="true">
+  <title>Deez-Native AR seal</title>
+  <defs>
+    <style>
+      .ring { fill: none; stroke: #3dd6f5; stroke-width: 2.25; }
+      .ring-soft { fill: none; stroke: #3dd6f5; stroke-width: 1.35; opacity: 0.72; }
+      .glyph { fill: none; stroke: #3dd6f5; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+      .fill { fill: #3dd6f5; }
+      .dim { fill: #3dd6f5; opacity: 0.55; }
+    </style>
+  </defs>
+  <!-- Field -->
+  <circle cx="128" cy="128" r="122" fill="#0d1117"/>
+  <!-- Outer double ring -->
+  <circle class="ring" cx="128" cy="128" r="112"/>
+  <circle class="ring-soft" cx="128" cy="128" r="104"/>
+  <!-- Cardinal ticks -->
+  <g class="glyph">
+    <path d="M128 22v14M128 220v14M22 128h14M220 128h14"/>
+    <path d="M48.5 48.5l10 10M197.5 197.5l10 10M197.5 48.5l-10 10M48.5 197.5l-10 10"/>
+  </g>
+  <!-- Alchemical orbit diamond -->
+  <path class="ring-soft" d="M128 36 L220 128 L128 220 L36 128 Z"/>
+  <!-- Inner working circle -->
+  <circle class="ring" cx="128" cy="128" r="62"/>
+  <!-- Sight triangle (AR eye frame) -->
+  <path class="glyph" d="M128 78 L174 158 H82 Z"/>
+  <!-- Eye -->
+  <ellipse class="glyph" cx="128" cy="128" rx="28" ry="14"/>
+  <circle class="fill" cx="128" cy="128" r="6.5"/>
+  <circle class="dim" cx="130.5" cy="126" r="2"/>
+  <!-- DN monogram (below sight triangle, inside working circle) -->
+  <g fill="none" stroke="#3dd6f5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M94 160 v24 M94 160 h11 c9 0 15 5 15 12 s-6 12 -15 12 h-11"/>
+    <path d="M136 184 V160 M136 160 L160 184 M160 184 V160"/>
+  </g>
+  <!-- Small planetary dots -->
+  <circle class="fill" cx="128" cy="44" r="2.5"/>
+  <circle class="fill" cx="212" cy="128" r="2.5"/>
+  <circle class="fill" cx="128" cy="212" r="2.5"/>
+  <circle class="fill" cx="44" cy="128" r="2.5"/>
+</svg>
