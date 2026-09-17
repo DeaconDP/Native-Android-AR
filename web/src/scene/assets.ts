@@ -1,54 +1,38 @@
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { PlacementAsset } from '../state/preferences';
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import {
+  getAssetDef,
+  webModelUrlFor,
+  type PlacementAsset,
+} from "../state/catalog";
 
 const gltfLoader = new GLTFLoader();
-let helmetTemplate: THREE.Group | null = null;
+const templateCache = new Map<string, THREE.Group>();
 
-async function loadHelmetTemplate(): Promise<THREE.Group> {
-  if (helmetTemplate) {
-    return helmetTemplate.clone(true);
+async function loadGlbTemplate(url: string): Promise<THREE.Group> {
+  const cached = templateCache.get(url);
+  if (cached) {
+    return cached.clone(true);
   }
-
-  const gltf = await gltfLoader.loadAsync('/models/helmet.glb');
-  helmetTemplate = gltf.scene;
-  helmetTemplate.scale.setScalar(0.25);
-  return helmetTemplate.clone(true);
+  const gltf = await gltfLoader.loadAsync(url);
+  const template = gltf.scene;
+  const box = new THREE.Box3().setFromObject(template);
+  const size = box.getSize(new THREE.Vector3()).length() || 1;
+  const center = box.getCenter(new THREE.Vector3());
+  template.position.sub(center);
+  template.scale.setScalar(0.28 / size);
+  templateCache.set(url, template);
+  return template.clone(true);
 }
 
-function createPrimitive(asset: PlacementAsset): THREE.Object3D {
-  switch (asset) {
-    case 'cube': {
-      const geometry = new THREE.BoxGeometry(0.12, 0.12, 0.12);
-      const material = new THREE.MeshStandardMaterial({ color: 0x3dd6f5 });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.y = 0.06;
-      return mesh;
-    }
-    case 'sphere': {
-      const geometry = new THREE.SphereGeometry(0.08, 32, 32);
-      const material = new THREE.MeshStandardMaterial({ color: 0xff7b72 });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.y = 0.08;
-      return mesh;
-    }
-    case 'cylinder': {
-      const geometry = new THREE.CylinderGeometry(0.06, 0.06, 0.16, 32);
-      const material = new THREE.MeshStandardMaterial({ color: 0x7ee787 });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.position.y = 0.08;
-      return mesh;
-    }
-    default:
-      throw new Error(`Unknown primitive asset: ${asset}`);
+export async function createPlacementObject(
+  asset: PlacementAsset,
+): Promise<THREE.Object3D> {
+  const def = getAssetDef(asset);
+  if (def.kind !== "glb") {
+    throw new Error(`Unsupported asset kind for ${asset}`);
   }
-}
-
-export async function createPlacementObject(asset: PlacementAsset): Promise<THREE.Object3D> {
-  if (asset === 'helmet') {
-    return loadHelmetTemplate();
-  }
-  return createPrimitive(asset);
+  return loadGlbTemplate(webModelUrlFor(asset));
 }
 
 export function disposeObject(object: THREE.Object3D): void {

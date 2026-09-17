@@ -1,4 +1,4 @@
-# Build Native Android AR TWA and install over wireless ADB (Android 11+).
+# Build Capacitor Native AR and install over wireless ADB (Android 11+).
 # Usage (first pair on this PC):
 #   powershell -NoProfile -File scripts\android-wireless.ps1 `
 #     -PairAddress "192.168.1.42:37123" -PairCode "123456" `
@@ -9,7 +9,7 @@
 #   powershell -NoProfile -File scripts\android-wireless.ps1 -Discover
 # Logcat only (no install):
 #   powershell -NoProfile -File scripts\android-wireless.ps1 -Discover -LogcatOnly
-# Reuse running Vite:
+# Reuse running Vite (optional; Cap ships bundled assets by default):
 #   powershell -NoProfile -File scripts\android-wireless.ps1 -Discover -SkipVite
 
 [CmdletBinding()]
@@ -27,6 +27,7 @@ $ErrorActionPreference = "Stop"
 
 $root = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { (Get-Location).Path }
 $root = (Resolve-Path -LiteralPath $root).Path
+$androidDir = Join-Path $root "android"
 $vitePort = 5187
 $package = "io.worldbuild.nativear"
 $activity = "$package/.MainActivity"
@@ -72,7 +73,6 @@ function Get-WirelessDevice {
 }
 
 function Get-DeviceSerial([string[]]$deviceLines) {
-  # Prefer IP:port (explicit connect) over mDNS aliases when the same phone appears twice.
   foreach ($line in $deviceLines) {
     if ($line -match "^(\d+\.\d+\.\d+\.\d+:\d+)\s+device") { return $Matches[1] }
   }
@@ -83,11 +83,11 @@ function Get-DeviceSerial([string[]]$deviceLines) {
 }
 
 function Ensure-LocalProperties {
-  $localProps = Join-Path $root "local.properties"
+  $localProps = Join-Path $androidDir "local.properties"
   if (Test-Path -LiteralPath $localProps) { return }
   $sdkEscaped = $sdk -replace "\\", "\\"
   Set-Content -LiteralPath $localProps -Value "sdk.dir=$sdkEscaped" -Encoding ASCII
-  Write-Host "Wrote local.properties (sdk.dir=$sdk)"
+  Write-Host "Wrote android/local.properties (sdk.dir=$sdk)"
 }
 
 function Ensure-Vite {
@@ -109,7 +109,7 @@ function Ensure-Vite {
     }
   }
 
-  Write-Host "Starting WebXR dev server on port $vitePort..."
+  Write-Host "Starting Vite on port $vitePort (Chrome WebXR / live QA)..."
   $cmd = "cd /d `"$webDir`" && npm run dev"
   Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmd -WindowStyle Minimized
 
@@ -138,8 +138,6 @@ function Show-NoDeviceHelp {
   Write-Host '  powershell -NoProfile -File scripts\android-wireless.ps1 `'
   Write-Host '    -PairAddress "192.168.1.42:37123" -PairCode "123456" `'
   Write-Host '    -ConnectAddress "192.168.1.42:5555"'
-  Write-Host ""
-  Write-Host "Or Cursor: Terminal > Run Task > Android: Wireless Pair + Connect"
 }
 
 if ($PairAddress) {
@@ -184,13 +182,13 @@ Write-Host "Using serial: $serial"
 if ($LogcatOnly) {
   Write-Host "Streaming filtered logcat (Ctrl+C to stop) ..."
   & $adb -s $serial logcat -v time |
-    Select-String -Pattern "nativear|chromium|WebXR|Console|TwaLauncher|CustomTabs|SSL|CERT|ERR_"
+    Select-String -Pattern "nativear|NativeAr|chromium|WebXR|Console|Capacitor|SSL|CERT|ERR_"
   exit 0
 }
 
 $lanIp = Get-LanIp
 $devUrl = "https://${lanIp}:${vitePort}"
-Write-Host "Dev URL (TWA_URL): $devUrl"
+Write-Host "Chrome WebXR URL: $devUrl"
 
 if (-not $SkipVite) {
   Ensure-Vite
@@ -202,10 +200,17 @@ Ensure-LocalProperties
 $env:ANDROID_HOME = $sdk
 
 if (-not $SkipBuild) {
-  Write-Host "Building and installing TWA with TWA_URL=$devUrl ..."
+  Write-Host "Cap sync + installDebug ..."
   Push-Location $root
   try {
-    & .\gradlew.bat installDebug "-PTWA_URL=$devUrl"
+    npm run cap:sync
+    if ($LASTEXITCODE -ne 0) { throw "cap:sync failed ($LASTEXITCODE)." }
+  } finally {
+    Pop-Location
+  }
+  Push-Location $androidDir
+  try {
+    & .\gradlew.bat installDebug
     if ($LASTEXITCODE -ne 0) { throw "installDebug failed ($LASTEXITCODE)." }
   } finally {
     Pop-Location
@@ -219,5 +224,5 @@ Write-Host "Launching $activity ..."
 if ($LASTEXITCODE -ne 0) { throw "am start failed ($LASTEXITCODE)." }
 
 Write-Host ""
-Write-Host "Done. Also test in Chrome: $devUrl"
-Write-Host 'JS/WebXR inspect: chrome://inspect on this PC (same wireless ADB session).'
+Write-Host "Done. Cap APK launched. Also test WebXR in Chrome: $devUrl"
+Write-Host 'JS inspect: chrome://inspect on this PC (same wireless ADB session).'

@@ -10,6 +10,13 @@ build/
 .cxx
 local.properties
 node_modules/
+web/dist/
+plugins/native-ar/dist/
+android/.gradle/
+android/app/build/
+android/build/
+ios/App/Pods/
+ios/App/build/
 *.apk
 *.ap_
 *.aab
@@ -19,3 +26,6 @@ bin/
 gen/
 out/
 release/
+.env
+web/.env
+tmp-models/

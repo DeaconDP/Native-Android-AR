@@ -2,20 +2,11 @@
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
-  set "LAN_IP=%%a"
-  set "LAN_IP=!LAN_IP: =!"
-  goto :found_ip
+if not exist "node_modules" (
+  echo Installing root dependencies...
+  call npm install
+  if errorlevel 1 goto :fail
 )
-:found_ip
-
-if not defined LAN_IP (
-  echo Could not detect LAN IP. Set TWA_URL manually in gradle.properties.
-  set "LAN_IP=localhost"
-)
-
-set "DEV_URL=https://%LAN_IP%:5187"
-echo Dev URL: %DEV_URL%
 
 if not exist "web\node_modules" (
   echo Installing web dependencies...
@@ -25,23 +16,34 @@ if not exist "web\node_modules" (
   popd
 )
 
-echo Starting WebXR dev server on port 5187...
-start "Native AR Web" cmd /c "cd /d "%~dp0web" && npm run dev"
+if not exist "plugins\native-ar\node_modules" (
+  echo Installing native-ar plugin dependencies...
+  pushd plugins\native-ar
+  call npm install
+  if errorlevel 1 goto :fail
+  popd
+)
 
-echo Waiting for dev server...
-timeout /t 4 /nobreak >nul
+echo Building web + Cap sync...
+call npm run cap:sync
+if errorlevel 1 goto :fail
 
-if not exist "local.properties" (
+if not exist "android\local.properties" (
   if defined ANDROID_HOME (
-    echo sdk.dir=%ANDROID_HOME:\=\\%> local.properties
+    echo sdk.dir=%ANDROID_HOME:\=\\%> android\local.properties
   ) else if exist "%LOCALAPPDATA%\Android\Sdk" (
-    echo sdk.dir=%LOCALAPPDATA:\=\\%\Android\Sdk> local.properties
+    echo sdk.dir=%LOCALAPPDATA:\=\\%\Android\Sdk> android\local.properties
   )
 )
 
-echo Building TWA APK with TWA_URL=%DEV_URL% ...
-call gradlew.bat installDebug -PTWA_URL=%DEV_URL%
-if errorlevel 1 goto :fail
+echo Installing debug APK...
+pushd android
+call gradlew.bat installDebug
+if errorlevel 1 (
+  popd
+  goto :fail
+)
+popd
 
 echo Launching on device...
 adb shell am start -n io.worldbuild.nativear/.MainActivity
@@ -51,7 +53,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo Done. Also test in Chrome: %DEV_URL%
+echo Done. For Chrome WebXR on LAN: cd web ^&^& npm run dev → https://^<lan-ip^>:5187
 pause
 exit /b 0
 
