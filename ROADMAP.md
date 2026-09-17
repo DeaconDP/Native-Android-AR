@@ -16,7 +16,7 @@ Demo backlog:
 | Demo | Surface | Status |
 |------|---------|--------|
 | Feature-point / tracking HUD | Native debug overlay | Done (Android 2026-09-17; iOS follow-up) |
-| Depth / occlusion peek | Native where supported | Deferred |
+| Depth / occlusion peek | Native where supported | Done (Android 2026-09-17; iOS skipped) |
 | Image / marker target place | Native ARCore/ARKit image anchors | Deferred |
 | Light-estimate viz | Native light probe readout | Deferred |
 | Face mesh peek | iOS ARKit face (optional Android) | Deferred |
@@ -28,7 +28,7 @@ Cap 8 shell with `native-ar` plugin (SceneView/ARCore + ARKit), WebXR/Quick Look
 ## Deferred
 
 - 2026-09-17: Feature-point HUD iOS overlay (`ARFrame.rawFeaturePoints`) — Android ARCore HUD shipped; iOS skipped as non-trivial in this pass. `plugins/native-ar/ios/Sources/NativeArPlugin/NativeArPlugin.swift`
-- 2026-09-17: Education Phase 3 — depth / occlusion peek beyond SceneView automatic depth. Phone-scope only. `plugins/native-ar` · `web/src/learn/curriculum.ts` (kind-occlusion)
+- 2026-09-17: Depth heatmap peek iOS (`ARFrame.sceneDepth`) — Android ARCore CPU depth image shipped; iOS skipped as non-trivial in this pass. `plugins/native-ar/ios/Sources/NativeArPlugin/NativeArPlugin.swift`
 - 2026-09-17: Education Phase 3 — image / marker target placement (ARCore/ARKit image anchors + target assets). `plugins/native-ar` · `web/src/learn/curriculum.ts` (kind-marker)
 - 2026-09-17: Education Phase 3 — light-estimate viz vs fixed Filament directional light. `plugins/native-ar` · `web/src/learn/curriculum.ts` (kind-light)
 - 2026-09-17: Education Phase 3 — face mesh peek (separate mode, not default floor place). `plugins/native-ar` · `web/src/learn/curriculum.ts` (kind-face)
@@ -36,4 +36,4 @@ Cap 8 shell with `native-ar` plugin (SceneView/ARCore + ARKit), WebXR/Quick Look
 - 2026-09-16: Production TWA / Digital Asset Links ship checklist superseded by Capacitor shell. Was `web/public/.well-known/assetlinks.json`.
 - 2026-08-28: Point cloud overlay unavailable in WebXR v1. Native Android feature-point HUD shipped 2026-09-17; WebXR still has no visitor point cloud.
 - 2026-08-28: Headset / `immersive-vr` out of scope for phone AR.
-- 2026-08-28: Depth mesh visualization beyond SceneView automatic depth — deferred.
+- 2026-08-28: People-occlusion / depth-mesh visualization beyond SceneView automatic depth — still deferred (CPU depth heatmap peek shipped Android 2026-09-17).

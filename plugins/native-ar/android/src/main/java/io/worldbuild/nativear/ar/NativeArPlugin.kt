@@ -36,6 +36,7 @@ import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
+import com.google.ar.core.Coordinates2d
 import com.google.ar.core.Frame
 import com.google.ar.core.HitResult
 import com.google.ar.core.InstantPlacementPoint
@@ -94,6 +95,15 @@ class NativeArPlugin : Plugin() {
     private var arSceneView: ARSceneView? = null
     private var featurePointHudView: FeaturePointHudView? = null
     private var featurePointHudEnabled = true
+    private var depthPeekView: DepthPeekView? = null
+    private var depthPeekEnabled = true
+    private var depthModeActive = false
+    private var depthModeResolved = false
+    private var depthPeekTick = 0
+    private var depthPeekHidden = false
+    private var depthPeekPixels: IntArray? = null
+    private val depthImageCorners = FloatArray(8)
+    private val depthViewCorners = FloatArray(8)
     private val hudViewMtx = FloatArray(16)
     private val hudProjMtx = FloatArray(16)
     private val hudVpMtx = FloatArray(16)
@@ -218,6 +228,7 @@ class NativeArPlugin : Plugin() {
         }
         reducedMotion = call.getBoolean("reducedMotion") ?: false
         featurePointHudEnabled = call.getBoolean("featurePointHud") ?: true
+        depthPeekEnabled = call.getBoolean("depthPeek") ?: true
         placed = false
         surfaceFound = false
         planeVisualReady = false
@@ -531,10 +542,13 @@ class NativeArPlugin : Plugin() {
                 config.focusMode = Config.FocusMode.AUTO
                 config.lightEstimationMode = Config.LightEstimationMode.DISABLED
                 config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
-                if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                    config.depthMode = Config.DepthMode.AUTOMATIC
+                val depthOk = session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)
+                depthModeActive = depthOk
+                depthModeResolved = true
+                config.depthMode = if (depthOk) {
+                    Config.DepthMode.AUTOMATIC
                 } else {
-                    config.depthMode = Config.DepthMode.DISABLED
+                    Config.DepthMode.DISABLED
                 }
             }
 
@@ -566,6 +580,7 @@ class NativeArPlugin : Plugin() {
                 }
                 updateSurfaceProbe(sceneView, frame)
                 featurePointHudView?.let { updateFeaturePointHud(frame, it) }
+                depthPeekView?.let { updateDepthPeek(frame, it) }
                 when (frame.camera.trackingState) {
                     TrackingState.TRACKING -> {
                         if (surfaceFound) {
@@ -585,10 +600,17 @@ class NativeArPlugin : Plugin() {
             arLifecycleOwner = owner
 
             webParent.addView(sceneView, index, params)
+            var overlayAt = index + 1
             if (featurePointHudEnabled) {
                 val hud = FeaturePointHudView(activity)
-                webParent.addView(hud, index + 1, params)
+                webParent.addView(hud, overlayAt, params)
                 featurePointHudView = hud
+                overlayAt++
+            }
+            if (depthPeekEnabled) {
+                val peek = DepthPeekView(activity)
+                webParent.addView(peek, overlayAt, params)
+                depthPeekView = peek
             }
             webView.bringToFront()
             materialLoader = MaterialLoader(sceneView.engine, activity)
@@ -1040,6 +1062,80 @@ class NativeArPlugin : Plugin() {
             } catch (_: Exception) {
                 // Already released.
             }
+        }
+    }
+
+    private fun updateDepthPeek(frame: Frame, peek: DepthPeekView) {
+        if (depthModeResolved && !depthModeActive) {
+            if (!depthPeekHidden) {
+                depthPeekHidden = true
+                peek.post { peek.visibility = View.GONE }
+            }
+            return
+        }
+        if (!depthModeActive) return
+        peek.dimmed = placed
+        if (placed) {
+            peek.postInvalidateOnAnimation()
+            return
+        }
+        depthPeekTick += 1
+        if (depthPeekTick % DepthPeekView.FRAME_STRIDE != 0) return
+
+        try {
+            frame.acquireDepthImage16Bits().use { image ->
+                val w = image.width
+                val h = image.height
+                if (w <= 0 || h <= 0) return
+                val plane = image.planes[0]
+                val buf = plane.buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+                val rowStride = plane.rowStride
+                val pixelStride = plane.pixelStride
+                if (pixelStride <= 0 || rowStride <= 0) return
+                val step = if (max(w, h) > 160) 2 else 1
+                val outW = w / step
+                val outH = h / step
+                if (outW <= 0 || outH <= 0) return
+                val needed = outW * outH
+                val pixels = depthPeekPixels?.takeIf { it.size == needed }
+                    ?: IntArray(needed).also { depthPeekPixels = it }
+                var i = 0
+                for (y in 0 until outH) {
+                    val row = y * step * rowStride
+                    for (x in 0 until outW) {
+                        val idx = row + x * step * pixelStride
+                        val mm = if (idx + 1 < buf.limit()) {
+                            buf.getShort(idx).toInt() and 0xFFFF
+                        } else {
+                            0
+                        }
+                        pixels[i++] = DepthPeekView.colorForMm(mm)
+                    }
+                }
+                // Depth is lower-res than the camera; normalized corners still map to the view.
+                depthImageCorners[0] = 0f
+                depthImageCorners[1] = 0f
+                depthImageCorners[2] = 1f
+                depthImageCorners[3] = 0f
+                depthImageCorners[4] = 1f
+                depthImageCorners[5] = 1f
+                depthImageCorners[6] = 0f
+                depthImageCorners[7] = 1f
+                var corners: FloatArray? = depthViewCorners
+                try {
+                    frame.transformCoordinates2d(
+                        Coordinates2d.IMAGE_NORMALIZED,
+                        depthImageCorners,
+                        Coordinates2d.VIEW,
+                        depthViewCorners,
+                    )
+                } catch (_: Exception) {
+                    corners = null
+                }
+                peek.setHeatmap(pixels, outW, outH, corners)
+            }
+        } catch (_: Exception) {
+            // NotYetAvailable / unsupported this frame — keep last heatmap.
         }
     }
 
@@ -1743,6 +1839,16 @@ class NativeArPlugin : Plugin() {
             (hud.parent as? ViewGroup)?.removeView(hud)
         }
         featurePointHudView = null
+        depthPeekView?.let { peek ->
+            (peek.parent as? ViewGroup)?.removeView(peek)
+            peek.release()
+        }
+        depthPeekView = null
+        depthPeekPixels = null
+        depthModeActive = false
+        depthModeResolved = false
+        depthPeekTick = 0
+        depthPeekHidden = false
         arSceneView?.let { view ->
             destroyPlaneGridTexture(view.engine)
             safeDestroySceneView(view)

@@ -29,7 +29,7 @@
 One epic at a time. Remaining entries live under ROADMAP Deferred (2026-09-17):
 
 - [x] Feature-point / tracking HUD (Android native; iOS overlay follow-up)
-- [ ] Depth / occlusion peek
+- [x] Depth / occlusion peek (Android native; iOS overlay follow-up)
 - [ ] Image / marker target place
 - [ ] Light-estimate viz
 - [ ] Face mesh peek

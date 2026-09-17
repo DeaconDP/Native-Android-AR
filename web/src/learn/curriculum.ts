@@ -305,7 +305,7 @@ export const LEARN_TOPICS: LearnTopic[] = [
         paragraphs: [
           "While you scan, a feature-point HUD (dots + count) draws ARCore's point cloud between the camera view and the WebView. After you place, that overlay dims so the model stays the focus.",
           "When a real plane arrives, an orange grid texture can reveal with a soft spotlight and a gentle breath pulse — cues that the world lock is improving. After you place, plane visuals hide so the model stays the focus.",
-          "Where the device supports it, ARCore automatic depth helps occlusion-quality tracking. Light estimation is kept simple here with a fixed Filament directional light so the educational demo stays predictable.",
+          "Where the device supports it, a semi-transparent depth heatmap peeks over the camera while you scan (ARCore depth image) and dims after you place. Automatic depth also helps occlusion-quality tracking. Light estimation is kept simple here with a fixed Filament directional light so the educational demo stays predictable.",
         ],
       },
     ],
@@ -489,8 +489,9 @@ export const LEARN_TOPICS: LearnTopic[] = [
     id: "kind-occlusion",
     section: "kinds",
     title: "Occlusion & depth",
-    summary: "Real geometry hiding virtual content — automatic depth today, viz later.",
-    status: "explained",
+    summary:
+      "Real geometry hiding virtual content — Android depth heatmap peek plus automatic depth.",
+    status: "live",
     sections: [
       {
         heading: "What it is",
@@ -499,9 +500,10 @@ export const LEARN_TOPICS: LearnTopic[] = [
         ],
       },
       {
-        heading: "In this app",
+        heading: "Try it",
         paragraphs: [
-          "ARCore automatic depth may help tracking quality where supported; we do not yet expose a visitor depth-mesh visualization. A teaching 'occlusion peek' is Education Phase 3.",
+          "Start AR on a native Android session. Where ARCore depth is supported, a semi-transparent heatmap covers the camera while you scan (near reads warm, far reads cool). After you place, it dims so the model stays the focus. Phones without depth skip the overlay; placement still works.",
+          "This is a CPU depth-image teaching peek, not a people-occlusion mesh. It is not drawn in WebXR or iOS in this pass.",
         ],
       },
     ],
@@ -574,7 +576,7 @@ export const LEARN_TOPICS: LearnTopic[] = [
       {
         heading: "Android",
         paragraphs: [
-          "ARCore provides tracking; SceneView 2.x hosts ARSceneView and Filament rendering in the native-ar plugin. Instant Placement, plane grids, and the feature-point HUD are ARCore-flavoured teaching tools.",
+          "ARCore provides tracking; SceneView 2.x hosts ARSceneView and Filament rendering in the native-ar plugin. Instant Placement, plane grids, the feature-point HUD, and the depth heatmap peek are ARCore-flavoured teaching tools.",
         ],
       },
       {

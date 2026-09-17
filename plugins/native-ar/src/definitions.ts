@@ -13,6 +13,8 @@ export interface NativeArStartOptions {
   reducedMotion?: boolean;
   /** ARCore feature-point HUD. Default true on Android native sessions. */
   featurePointHud?: boolean;
+  /** ARCore depth heatmap peek. Default true on Android native sessions. */
+  depthPeek?: boolean;
 }
 
 export interface NativeArPointOptions {

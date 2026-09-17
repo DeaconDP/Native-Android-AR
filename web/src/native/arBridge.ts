@@ -151,6 +151,7 @@ export async function startNativeAr(options?: {
   reducedMotion?: boolean;
   asset?: PlacementAsset;
   featurePointHud?: boolean;
+  depthPeek?: boolean;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const asset = options?.asset ?? loadSelectedAsset();
   try {
@@ -160,6 +161,7 @@ export async function startNativeAr(options?: {
       modelPath: nativeModelPath(asset),
       reducedMotion: options?.reducedMotion === true,
       featurePointHud: options?.featurePointHud ?? true,
+      depthPeek: options?.depthPeek ?? true,
     });
     return { ok: true };
   } catch (e) {
