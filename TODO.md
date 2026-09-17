@@ -24,21 +24,19 @@
 - [x] Software stacks / techniques curriculum chapters (same chip model)
 - [x] “Try in AR” only for `live` topics
 
-## Education Phase 3 — Technique demos
-
-One epic at a time. Remaining entries live under ROADMAP Deferred (2026-09-17):
+## Education Phase 3 — Technique demos (Android done)
 
 - [x] Feature-point / tracking HUD (Android native; iOS overlay follow-up)
 - [x] Depth / occlusion peek (Android native; iOS overlay follow-up)
 - [x] Image / marker target place (Android native; iOS image anchors follow-up)
 - [x] Light-estimate viz (Android native; iOS light estimate follow-up)
 - [x] Face mesh peek (Android native; iOS face anchors follow-up)
-- [ ] Geo AR sketch (hard defer)
+- [ ] Geo AR sketch (hard defer — see ROADMAP)
 
 ## Also next
 
 - [x] Rebrand to Deez-Native AR + hermetic seal on home gate
 
-- [ ] Device QA on ARCore phone: Instant Placement place → rotate/pinch → reposition/exit (confirm selected model)
+- [ ] Device QA on ARCore phone: Instant Placement place → rotate/pinch → reposition/exit; also Learn Try paths for marker / light / face / depth / feature-point overlays (confirm selected model)
 - [ ] Optional: set `VITE_AR_ORIGIN` and verify Cap Android Chrome handoff
 - [ ] iOS Cap + ARKit / Quick Look on Mac (team d@worldbuild.io)

@@ -8,8 +8,8 @@ Sectioned Learn hub + milestone coach captions mapped 1:1 to techniques this app
 ### Education Phase 2 — AR taxonomy Learn hub ✅
 Kinds of AR + software stacks/techniques with `live` | `explained` | `roadmap` chips; “Try in AR” only for live topics. Shipped 2026-09-17.
 
-### Education Phase 3 — Technique demos
-Interactive showcases beyond the current place-on-plane lab. Each demo is its own sub-epic when started; do not parallelize. Taxonomy labels exist — remaining demos stay Deferred until picked up one at a time.
+### Education Phase 3 — Technique demos ✅
+Android teaching demos shipped serially 2026-09-17 (feature-point HUD, depth peek, image target, light estimate, face mesh). iOS counterparts stay Deferred. Geo stays Deferred hard.
 
 Demo backlog:
 
