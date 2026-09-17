@@ -14,6 +14,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.net.Uri
+import android.opengl.Matrix
 import android.os.Handler
 import android.os.Looper
 import android.view.View
@@ -35,9 +36,11 @@ import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
+import com.google.ar.core.Frame
 import com.google.ar.core.HitResult
 import com.google.ar.core.InstantPlacementPoint
 import com.google.ar.core.Plane
+import com.google.ar.core.PointCloud
 import com.google.ar.core.Pose
 import com.google.ar.core.TrackingState
 import com.google.android.filament.Texture
@@ -89,6 +92,14 @@ import org.json.JSONObject
 class NativeArPlugin : Plugin() {
 
     private var arSceneView: ARSceneView? = null
+    private var featurePointHudView: FeaturePointHudView? = null
+    private var featurePointHudEnabled = true
+    private val hudViewMtx = FloatArray(16)
+    private val hudProjMtx = FloatArray(16)
+    private val hudVpMtx = FloatArray(16)
+    private val hudWorld = FloatArray(4)
+    private val hudClip = FloatArray(4)
+    private val hudScratch = FloatArray(FeaturePointHudView.MAX_POINTS * 2)
     private var materialLoader: MaterialLoader? = null
     private var loadedModelInstance: ModelInstance? = null
     private var modelNode: ModelNode? = null
@@ -206,6 +217,7 @@ class NativeArPlugin : Plugin() {
             return
         }
         reducedMotion = call.getBoolean("reducedMotion") ?: false
+        featurePointHudEnabled = call.getBoolean("featurePointHud") ?: true
         placed = false
         surfaceFound = false
         planeVisualReady = false
@@ -553,6 +565,7 @@ class NativeArPlugin : Plugin() {
                     cancelSessionWatchdog()
                 }
                 updateSurfaceProbe(sceneView, frame)
+                featurePointHudView?.let { updateFeaturePointHud(frame, it) }
                 when (frame.camera.trackingState) {
                     TrackingState.TRACKING -> {
                         if (surfaceFound) {
@@ -572,6 +585,11 @@ class NativeArPlugin : Plugin() {
             arLifecycleOwner = owner
 
             webParent.addView(sceneView, index, params)
+            if (featurePointHudEnabled) {
+                val hud = FeaturePointHudView(activity)
+                webParent.addView(hud, index + 1, params)
+                featurePointHudView = hud
+            }
             webView.bringToFront()
             materialLoader = MaterialLoader(sceneView.engine, activity)
             arSceneView = sceneView
@@ -959,6 +977,69 @@ class NativeArPlugin : Plugin() {
         planeGridTexture = null
         if (engine != null) {
             engine.safeDestroyTexture(texture)
+        }
+    }
+
+    private fun updateFeaturePointHud(frame: Frame, hud: FeaturePointHudView) {
+        val w = hud.width.toFloat()
+        val h = hud.height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        hud.dimmed = placed
+
+        val camera = frame.camera
+        if (camera.trackingState != TrackingState.TRACKING) {
+            hud.setScreenPoints(hudScratch, 0, 0)
+            return
+        }
+
+        camera.getViewMatrix(hudViewMtx, 0)
+        camera.getProjectionMatrix(hudProjMtx, 0, 0.1f, 100f)
+        Matrix.multiplyMM(hudVpMtx, 0, hudProjMtx, 0, hudViewMtx, 0)
+
+        var cloud: PointCloud? = null
+        try {
+            cloud = frame.acquirePointCloud()
+            val buf = cloud.points
+            val pos = buf.position()
+            val total = buf.remaining() / 4
+            if (total <= 0) {
+                hud.setScreenPoints(hudScratch, 0, 0)
+                return
+            }
+            val max = FeaturePointHudView.MAX_POINTS
+            val stride = if (total <= max) 1 else total / max
+            var i = 0
+            var drawn = 0
+            while (i < total && drawn < max) {
+                val base = pos + i * 4
+                if (buf.get(base + 3) >= FeaturePointHudView.MIN_CONFIDENCE) {
+                    hudWorld[0] = buf.get(base)
+                    hudWorld[1] = buf.get(base + 1)
+                    hudWorld[2] = buf.get(base + 2)
+                    hudWorld[3] = 1f
+                    Matrix.multiplyMV(hudClip, 0, hudVpMtx, 0, hudWorld, 0)
+                    val cw = hudClip[3]
+                    if (cw > 0.0001f) {
+                        val ndcX = hudClip[0] / cw
+                        val ndcY = hudClip[1] / cw
+                        if (ndcX >= -1f && ndcX <= 1f && ndcY >= -1f && ndcY <= 1f) {
+                            hudScratch[drawn * 2] = (ndcX + 1f) * 0.5f * w
+                            hudScratch[drawn * 2 + 1] = (1f - ndcY) * 0.5f * h
+                            drawn++
+                        }
+                    }
+                }
+                i += stride
+            }
+            hud.setScreenPoints(hudScratch, drawn, drawn)
+        } catch (_: Exception) {
+            // Skip this frame; point cloud is not always available.
+        } finally {
+            try {
+                cloud?.release()
+            } catch (_: Exception) {
+                // Already released.
+            }
         }
     }
 
@@ -1658,6 +1739,10 @@ class NativeArPlugin : Plugin() {
         cancelScaleSmoothing()
         clearPlacement(keepModel = false)
         loadedModelInstance = null
+        featurePointHudView?.let { hud ->
+            (hud.parent as? ViewGroup)?.removeView(hud)
+        }
+        featurePointHudView = null
         arSceneView?.let { view ->
             destroyPlaneGridTexture(view.engine)
             safeDestroySceneView(view)

@@ -11,6 +11,8 @@ export interface NativeArStartOptions {
   /** Capacitor asset-relative path, without a leading slash. */
   modelPath: string;
   reducedMotion?: boolean;
+  /** ARCore feature-point HUD. Default true on Android native sessions. */
+  featurePointHud?: boolean;
 }
 
 export interface NativeArPointOptions {

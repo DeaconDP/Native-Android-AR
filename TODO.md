@@ -24,11 +24,11 @@
 - [x] Software stacks / techniques curriculum chapters (same chip model)
 - [x] “Try in AR” only for `live` topics
 
-## Education Phase 3 — Technique demos (deferred)
+## Education Phase 3 — Technique demos
 
-Blocked until started one epic at a time. Entries live under ROADMAP Deferred (2026-09-17):
+One epic at a time. Remaining entries live under ROADMAP Deferred (2026-09-17):
 
-- [ ] Feature-point / tracking HUD
+- [x] Feature-point / tracking HUD (Android native; iOS overlay follow-up)
 - [ ] Depth / occlusion peek
 - [ ] Image / marker target place
 - [ ] Light-estimate viz

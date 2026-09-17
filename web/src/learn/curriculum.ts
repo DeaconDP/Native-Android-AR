@@ -303,6 +303,7 @@ export const LEARN_TOPICS: LearnTopic[] = [
       {
         heading: "What you see while scanning",
         paragraphs: [
+          "While you scan, a feature-point HUD (dots + count) draws ARCore's point cloud between the camera view and the WebView. After you place, that overlay dims so the model stays the focus.",
           "When a real plane arrives, an orange grid texture can reveal with a soft spotlight and a gentle breath pulse — cues that the world lock is improving. After you place, plane visuals hide so the model stays the focus.",
           "Where the device supports it, ARCore automatic depth helps occlusion-quality tracking. Light estimation is kept simple here with a fixed Filament directional light so the educational demo stays predictable.",
         ],
@@ -406,7 +407,7 @@ export const LEARN_TOPICS: LearnTopic[] = [
     section: "kinds",
     title: "Markerless plane / SLAM",
     summary:
-      "World tracking from feature points and planes — the live lab you can Start AR into.",
+      "World tracking from feature points and planes — live lab plus native Android feature-point HUD.",
     status: "live",
     sections: [
       {
@@ -419,7 +420,8 @@ export const LEARN_TOPICS: LearnTopic[] = [
       {
         heading: "Try it",
         paragraphs: [
-          "Start AR on a supported phone. Coach captions walk scan → ready → place → gesture. Pair with Hit cascade & Instant Placement topics.",
+          "Start AR on a supported phone. On native Android, cyan feature-point dots and a count label show ARCore's tracking map while you scan; they dim after you place so the model stays the focus. Coach captions walk scan → ready → place → gesture. Pair with Hit cascade & Instant Placement topics.",
+          "The feature-point HUD is a teaching overlay on Android (ARCore point cloud). It is not drawn in WebXR or iOS in this pass.",
         ],
       },
     ],
@@ -572,7 +574,7 @@ export const LEARN_TOPICS: LearnTopic[] = [
       {
         heading: "Android",
         paragraphs: [
-          "ARCore provides tracking; SceneView 2.x hosts ARSceneView and Filament rendering in the native-ar plugin. Instant Placement and plane grids are ARCore-flavoured teaching tools.",
+          "ARCore provides tracking; SceneView 2.x hosts ARSceneView and Filament rendering in the native-ar plugin. Instant Placement, plane grids, and the feature-point HUD are ARCore-flavoured teaching tools.",
         ],
       },
       {

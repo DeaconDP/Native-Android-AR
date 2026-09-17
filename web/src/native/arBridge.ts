@@ -150,6 +150,7 @@ export async function endWebXrSession(session: XRSession | null): Promise<void> 
 export async function startNativeAr(options?: {
   reducedMotion?: boolean;
   asset?: PlacementAsset;
+  featurePointHud?: boolean;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const asset = options?.asset ?? loadSelectedAsset();
   try {
@@ -158,6 +159,7 @@ export async function startNativeAr(options?: {
     await NativeAr.startSession({
       modelPath: nativeModelPath(asset),
       reducedMotion: options?.reducedMotion === true,
+      featurePointHud: options?.featurePointHud ?? true,
     });
     return { ok: true };
   } catch (e) {
