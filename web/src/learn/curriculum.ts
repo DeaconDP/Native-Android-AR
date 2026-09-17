@@ -384,8 +384,8 @@ export const LEARN_TOPICS: LearnTopic[] = [
     section: "kinds",
     title: "Marker / image tracking",
     summary:
-      "Anchor content to a printed image or fiducial — not the default floor lab here.",
-    status: "roadmap",
+      "Android live: lock the model to a printed image target — separate from the floor lab.",
+    status: "live",
     sections: [
       {
         heading: "What it is",
@@ -395,9 +395,11 @@ export const LEARN_TOPICS: LearnTopic[] = [
         ],
       },
       {
-        heading: "In this app",
+        heading: "Try it",
         paragraphs: [
-          "Not shipped yet. Education Phase 3 plans an image-target place demo on native ARCore/ARKit once taxonomy labels exist. See ROADMAP Deferred.",
+          "On the Capacitor Android app, open How it works → Marker / image tracking → Try in AR. That starts a separate native session (placementMode: image) — not the floor-plane lab. Home Start AR still opens Instant Placement / planes.",
+          "Print the bundled target markers/deez_image_target.png (also at /markers/deez_image_target.png in the web build) about 16 cm / 6 in wide on matte paper. Point the camera at it; the model parents to the image when ARCore locks. Rotate and pinch still work; two-finger move is a no-op because the print is the pose. Feature-point and depth overlays stay off so the marker lesson stays clear.",
+          "Browser, WebXR, and iOS do not run this demo yet. Try in AR on those surfaces explains that you need the Android app. iOS ARKit image anchors are deferred.",
         ],
       },
     ],
@@ -576,7 +578,7 @@ export const LEARN_TOPICS: LearnTopic[] = [
       {
         heading: "Android",
         paragraphs: [
-          "ARCore provides tracking; SceneView 2.x hosts ARSceneView and Filament rendering in the native-ar plugin. Instant Placement, plane grids, the feature-point HUD, and the depth heatmap peek are ARCore-flavoured teaching tools.",
+          "ARCore provides tracking; SceneView 2.x hosts ARSceneView and Filament rendering in the native-ar plugin. Instant Placement, plane grids, the feature-point HUD, the depth heatmap peek, and image-target (Augmented Image) placement are ARCore-flavoured teaching tools.",
         ],
       },
       {
@@ -673,12 +675,42 @@ export type CoachMilestone = "scan" | "ready" | "placed" | "gesture" | "orbit";
 export function coachForMilestone(
   mode: string,
   milestone: CoachMilestone,
+  placement: "plane" | "image" = "plane",
 ): { text: string; topicId: LearnTopicId } {
   if (mode === "orbit" || milestone === "orbit") {
     return {
       text: "Drag to rotate · pinch to scale — orbit (no world anchors) · Learn: orbit-control",
       topicId: "orbit-control",
     };
+  }
+  if (placement === "image") {
+    switch (milestone) {
+      case "scan":
+        return {
+          text: "Point camera at the marker · Learn: kind-marker",
+          topicId: "kind-marker",
+        };
+      case "ready":
+        return {
+          text: "Marker locked — model will sit on the print · Learn: kind-marker",
+          topicId: "kind-marker",
+        };
+      case "placed":
+        return {
+          text: "Drag rotate · pinch scale · stays on the print · Learn: kind-marker",
+          topicId: "kind-marker",
+        };
+      case "gesture":
+        return {
+          text: "Open Learn — marker vs plane tracking · Learn: kind-marker",
+          topicId: "kind-marker",
+        };
+      default:
+        return {
+          text: "Point camera at the marker · Learn: kind-marker",
+          topicId: "kind-marker",
+        };
+    }
   }
   switch (milestone) {
     case "scan":

@@ -6,6 +6,8 @@ import {
 import { saveSelectedAsset } from "../state/preferences";
 import {
   exitAr,
+  isCapacitorAndroid,
+  isNativeArSupported,
   NativeAr,
   nativeReposition,
   openChromeArHandoff,
@@ -16,6 +18,7 @@ import {
   tryQuickLookAr,
   webModelUrl,
   type ArMode,
+  type NativeArPlacementMode,
 } from "../native/arBridge";
 import { createOrbitViewer, type OrbitViewerHandle } from "./orbit-viewer";
 import { createWebXrViewer, type WebXrViewerHandle } from "./webxr-viewer";
@@ -28,6 +31,7 @@ export interface ArSessionController {
 
 type Runtime = {
   mode: ArMode;
+  nativePlacementMode: NativeArPlacementMode;
   xrSession: XRSession | null;
   webxr: WebXrViewerHandle | null;
   orbit: OrbitViewerHandle | null;
@@ -91,10 +95,19 @@ export async function initGate(store: AppStateStore): Promise<void> {
 async function startSession(
   store: AppStateStore,
   uiRoot: HTMLElement,
+  options?: { nativePlacementMode?: NativeArPlacementMode },
 ): Promise<ArSessionController> {
   const mode = await prepareArMode();
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     .matches;
+  const nativePlacementMode: NativeArPlacementMode =
+    options?.nativePlacementMode ?? "plane";
+
+  if (nativePlacementMode === "image" && mode !== "native") {
+    throw new Error(
+      "Image-target placement needs the Capacitor Android app with ARCore.",
+    );
+  }
 
   if (mode === "quicklook") {
     const ok = await tryQuickLookAr(store.selectedAsset);
@@ -154,6 +167,7 @@ async function startSession(
     const started = await startNativeAr({
       reducedMotion,
       asset: store.selectedAsset,
+      placementMode: nativePlacementMode,
     });
     if (!started.ok) throw new Error(started.error);
 
@@ -222,10 +236,12 @@ async function startSession(
         void endFromOutside(store);
       },
     },
+    nativePlacementMode,
   );
 
   runtime = {
     mode,
+    nativePlacementMode,
     xrSession,
     webxr,
     orbit,
@@ -363,6 +379,24 @@ export function bindStoreActions(
         break;
       }
       case "try-ar": {
+        const topicId = store.learnTopicId;
+        const markerDemo = topicId === "kind-marker";
+        if (markerDemo) {
+          const androidNative =
+            isCapacitorAndroid() && (await isNativeArSupported());
+          if (!androidNative) {
+            store.patch({
+              showLearn: false,
+              learnTopicId: null,
+              gateTitle: "Marker demo needs Android",
+              gateBody:
+                "Image-target placement uses ARCore Augmented Images in the Capacitor Android app. Print /markers/deez_image_target.png about 16 cm (6 in) wide on matte paper, then Try in AR from the installed app — not the browser, WebXR, or iOS in this build.",
+              gateActionLabel: "Start AR",
+              gateError: false,
+            });
+            break;
+          }
+        }
         store.patch({ showLearn: false, learnTopicId: null });
         if (store.phase === "ar" || store.isStarting) break;
         {
@@ -371,7 +405,9 @@ export function bindStoreActions(
           button.setAttribute("aria-busy", "true");
           store.patch({ isStarting: true });
           try {
-            const controller = await startSession(store, uiRoot);
+            const controller = await startSession(store, uiRoot, {
+              nativePlacementMode: markerDemo ? "image" : "plane",
+            });
             setController(controller);
           } catch (error) {
             store.patch({
@@ -437,6 +473,7 @@ export function bindStoreActions(
               const started = await startNativeAr({
                 reducedMotion,
                 asset,
+                placementMode: current.nativePlacementMode,
               });
               if (!started.ok) {
                 store.patch({ sessionError: started.error });

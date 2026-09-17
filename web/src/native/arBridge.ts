@@ -1,6 +1,7 @@
 import { Browser } from "@capacitor/browser";
 import { Capacitor } from "@capacitor/core";
 import { NativeAr } from "native-ar";
+import type { NativeArPlacementMode } from "native-ar";
 import { isQuickLookSupported, launchQuickLook } from "../ar/quickLook";
 import {
   ASSET_LABELS,
@@ -12,6 +13,12 @@ import {
 import { loadSelectedAsset } from "../state/preferences";
 
 export type ArMode = "native" | "webxr" | "orbit" | "quicklook" | "chrome";
+
+export type { NativeArPlacementMode };
+
+export function isCapacitorAndroid(): boolean {
+  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+}
 
 export type ArEnterResult =
   | { ok: true; mode: ArMode }
@@ -152,16 +159,20 @@ export async function startNativeAr(options?: {
   asset?: PlacementAsset;
   featurePointHud?: boolean;
   depthPeek?: boolean;
+  placementMode?: NativeArPlacementMode;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const asset = options?.asset ?? loadSelectedAsset();
+  const placementMode: NativeArPlacementMode = options?.placementMode ?? "plane";
+  const imageMode = placementMode === "image";
   try {
     document.documentElement.classList.add("is-ar-native");
     document.body.classList.add("is-ar-native");
     await NativeAr.startSession({
       modelPath: nativeModelPath(asset),
       reducedMotion: options?.reducedMotion === true,
-      featurePointHud: options?.featurePointHud ?? true,
-      depthPeek: options?.depthPeek ?? true,
+      featurePointHud: imageMode ? false : (options?.featurePointHud ?? true),
+      depthPeek: imageMode ? false : (options?.depthPeek ?? true),
+      placementMode,
     });
     return { ok: true };
   } catch (e) {

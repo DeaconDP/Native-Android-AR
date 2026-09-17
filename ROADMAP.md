@@ -17,7 +17,7 @@ Demo backlog:
 |------|---------|--------|
 | Feature-point / tracking HUD | Native debug overlay | Done (Android 2026-09-17; iOS follow-up) |
 | Depth / occlusion peek | Native where supported | Done (Android 2026-09-17; iOS skipped) |
-| Image / marker target place | Native ARCore/ARKit image anchors | Deferred |
+| Image / marker target place | Native ARCore image anchors | Done (Android 2026-09-17; iOS skipped) |
 | Light-estimate viz | Native light probe readout | Deferred |
 | Face mesh peek | iOS ARKit face (optional Android) | Deferred |
 | Geo AR sketch | Location + outdoor QA | Deferred hard |
@@ -29,7 +29,7 @@ Cap 8 shell with `native-ar` plugin (SceneView/ARCore + ARKit), WebXR/Quick Look
 
 - 2026-09-17: Feature-point HUD iOS overlay (`ARFrame.rawFeaturePoints`) — Android ARCore HUD shipped; iOS skipped as non-trivial in this pass. `plugins/native-ar/ios/Sources/NativeArPlugin/NativeArPlugin.swift`
 - 2026-09-17: Depth heatmap peek iOS (`ARFrame.sceneDepth`) — Android ARCore CPU depth image shipped; iOS skipped as non-trivial in this pass. `plugins/native-ar/ios/Sources/NativeArPlugin/NativeArPlugin.swift`
-- 2026-09-17: Education Phase 3 — image / marker target placement (ARCore/ARKit image anchors + target assets). `plugins/native-ar` · `web/src/learn/curriculum.ts` (kind-marker)
+- 2026-09-17: Education Phase 3 — image / marker target placement iOS ARKit image anchors skipped as non-trivial in this pass. Android ARCore Augmented Images shipped. `plugins/native-ar/ios/Sources/NativeArPlugin/NativeArPlugin.swift` · `web/src/learn/curriculum.ts` (kind-marker)
 - 2026-09-17: Education Phase 3 — light-estimate viz vs fixed Filament directional light. `plugins/native-ar` · `web/src/learn/curriculum.ts` (kind-light)
 - 2026-09-17: Education Phase 3 — face mesh peek (separate mode, not default floor place). `plugins/native-ar` · `web/src/learn/curriculum.ts` (kind-face)
 - 2026-09-17: Education Phase 3 — geo / location AR sketch. Needs location permissions + outdoor QA. `web/src/learn/curriculum.ts` (kind-geo)

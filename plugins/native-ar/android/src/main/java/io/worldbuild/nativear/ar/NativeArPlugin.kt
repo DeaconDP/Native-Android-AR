@@ -35,6 +35,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import com.google.ar.core.ArCoreApk
+import com.google.ar.core.AugmentedImage
 import com.google.ar.core.Config
 import com.google.ar.core.Coordinates2d
 import com.google.ar.core.Frame
@@ -148,6 +149,8 @@ class NativeArPlugin : Plugin() {
     private var sensorManager: SensorManager? = null
     private var imuWarmupListener: SensorEventListener? = null
     private var lastTrackingKey: String? = null
+    /** Image-target session (ARCore Augmented Images). Default false = plane lab. */
+    private var imagePlacementMode = false
 
     private class PluginLifecycleOwner : LifecycleOwner {
         val registry = LifecycleRegistry(this)
@@ -227,8 +230,15 @@ class NativeArPlugin : Plugin() {
             return
         }
         reducedMotion = call.getBoolean("reducedMotion") ?: false
-        featurePointHudEnabled = call.getBoolean("featurePointHud") ?: true
-        depthPeekEnabled = call.getBoolean("depthPeek") ?: true
+        imagePlacementMode = (call.getString("placementMode") ?: "plane")
+            .equals("image", ignoreCase = true)
+        if (imagePlacementMode) {
+            featurePointHudEnabled = false
+            depthPeekEnabled = false
+        } else {
+            featurePointHudEnabled = call.getBoolean("featurePointHud") ?: true
+            depthPeekEnabled = call.getBoolean("depthPeek") ?: true
+        }
         placed = false
         surfaceFound = false
         planeVisualReady = false
@@ -362,7 +372,11 @@ class NativeArPlugin : Plugin() {
                 "native_move|x=$x|y=$y|placed=$placed|emerging=${emergeAnimator != null}",
             )
             // #endregion
-            val didMove = arSceneView?.let { moveModelAtScreen(x, y, it) } ?: false
+            val didMove = if (imagePlacementMode) {
+                false
+            } else {
+                arSceneView?.let { moveModelAtScreen(x, y, it) } ?: false
+            }
             // #region agent log
             Logger.info("DBG_a996cb", "native_move_result|moved=$didMove")
             // #endregion
@@ -374,7 +388,12 @@ class NativeArPlugin : Plugin() {
     fun reposition(call: PluginCall) {
         bridge.executeOnMainThread {
             clearPlacement(keepModel = true)
-            arSceneView?.let { stylePlaneRenderer(it) }
+            if (imagePlacementMode) {
+                surfaceFound = false
+                notifyTracking("initializing", "Point camera at the marker")
+            } else {
+                arSceneView?.let { stylePlaneRenderer(it) }
+            }
             call.resolve()
         }
     }
@@ -535,20 +554,32 @@ class NativeArPlugin : Plugin() {
             sceneView.arCore.checkCameraPermission = false
             sceneView.arCore.checkAvailability = false
             sceneView.keepScreenOn = true
-            stylePlaneRenderer(sceneView)
+            if (imagePlacementMode) {
+                sceneView.planeRenderer.isEnabled = false
+                sceneView.planeRenderer.isVisible = false
+            } else {
+                stylePlaneRenderer(sceneView)
+            }
             sceneView.configureSession { session, config ->
-                config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
                 config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                 config.focusMode = Config.FocusMode.AUTO
                 config.lightEstimationMode = Config.LightEstimationMode.DISABLED
-                config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
-                val depthOk = session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)
-                depthModeActive = depthOk
-                depthModeResolved = true
-                config.depthMode = if (depthOk) {
-                    Config.DepthMode.AUTOMATIC
+                if (imagePlacementMode) {
+                    ImageTargetSupport.applyToConfig(session, config, activity.assets)
+                    depthModeActive = false
+                    depthModeResolved = true
+                    config.depthMode = Config.DepthMode.DISABLED
                 } else {
-                    Config.DepthMode.DISABLED
+                    config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+                    config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
+                    val depthOk = session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)
+                    depthModeActive = depthOk
+                    depthModeResolved = true
+                    config.depthMode = if (depthOk) {
+                        Config.DepthMode.AUTOMATIC
+                    } else {
+                        Config.DepthMode.DISABLED
+                    }
                 }
             }
 
@@ -578,12 +609,22 @@ class NativeArPlugin : Plugin() {
                     sessionFrameReceived = true
                     cancelSessionWatchdog()
                 }
-                updateSurfaceProbe(sceneView, frame)
+                if (imagePlacementMode) {
+                    updateImageTarget(sceneView, frame)
+                } else {
+                    updateSurfaceProbe(sceneView, frame)
+                }
                 featurePointHudView?.let { updateFeaturePointHud(frame, it) }
                 depthPeekView?.let { updateDepthPeek(frame, it) }
                 when (frame.camera.trackingState) {
                     TrackingState.TRACKING -> {
-                        if (surfaceFound) {
+                        if (imagePlacementMode) {
+                            when {
+                                placed -> notifyTracking("ready", "Placed on marker")
+                                surfaceFound -> notifyTracking("ready", "Marker locked")
+                                else -> notifyTracking("initializing", "Point camera at the marker")
+                            }
+                        } else if (surfaceFound) {
                             notifyTracking("ready", if (placed) "Fossil placed" else "Tap to place a fossil")
                         } else {
                             notifyTracking("initializing", "Move phone to find a surface")
@@ -1158,6 +1199,49 @@ class NativeArPlugin : Plugin() {
         startPlaneReveal(sceneView)
     }
 
+    private fun findTrackedImage(sceneView: ARSceneView, frame: Frame): AugmentedImage? {
+        val candidates = sceneView.session?.getAllTrackables(AugmentedImage::class.java)
+            ?: frame.getUpdatedTrackables(AugmentedImage::class.java)
+        return candidates.firstOrNull { image ->
+            image.name == ImageTargetSupport.TARGET_NAME &&
+                image.trackingState == TrackingState.TRACKING &&
+                image.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
+        }
+    }
+
+    private fun updateImageTarget(sceneView: ARSceneView, frame: Frame) {
+        if (placed) return
+        if (frame.camera.trackingState != TrackingState.TRACKING) return
+        val image = findTrackedImage(sceneView, frame)
+        if (image == null) {
+            if (surfaceFound) surfaceFound = false
+            return
+        }
+        if (!surfaceFound) {
+            surfaceFound = true
+            notifyTracking("ready", "Marker locked")
+        }
+        placeModelOnImage(sceneView, image)
+    }
+
+    private fun placeModelOnImage(sceneView: ARSceneView, image: AugmentedImage): Boolean {
+        if (placed) return true
+        val instance = loadedModelInstance ?: return false
+        val node = obtainModelNode(instance, forceMatte = false)
+        val newAnchor = AnchorNode(sceneView.engine, image.createAnchor(image.centerPose))
+        newAnchor.addChildNode(node)
+        sceneView.addChildNode(newAnchor)
+        anchorNode = newAnchor
+        placed = true
+        cancelPlaneReveal()
+        sceneView.planeRenderer.isVisible = false
+        sceneView.planeRenderer.isEnabled = false
+        startEmergence()
+        faceCamera()
+        notifyListeners("placed", JSObject())
+        return true
+    }
+
     private fun isHorizontalPlaneHit(hit: HitResult): Boolean {
         val trackable = hit.trackable
         // Drop isPoseInPolygon so extent-edge taps still place on the plane.
@@ -1204,6 +1288,18 @@ class NativeArPlugin : Plugin() {
         if (loadedModelInstance == null) {
             out.put("placed", false)
             out.put("error", "no-model")
+            return out
+        }
+        if (imagePlacementMode) {
+            val frame = sceneView.frame
+            val image = if (frame != null) findTrackedImage(sceneView, frame) else null
+            if (image == null || !placeModelOnImage(sceneView, image)) {
+                out.put("placed", false)
+                out.put("error", "no-marker")
+                return out
+            }
+            out.put("placed", true)
+            out.put("error", JSONObject.NULL)
             return out
         }
         val hit = hitAt(sceneView, x, y)
@@ -1384,7 +1480,7 @@ class NativeArPlugin : Plugin() {
     }
 
     private fun moveModelAtScreen(x: Float, y: Float, sceneView: ARSceneView): Boolean {
-        if (!placed || emergeAnimator != null) return false
+        if (imagePlacementMode || !placed || emergeAnimator != null) return false
         val node = modelNode ?: return false
         val hit = hitAt(sceneView, x, y) ?: return false
         anchorNode?.let { oldAnchor ->
