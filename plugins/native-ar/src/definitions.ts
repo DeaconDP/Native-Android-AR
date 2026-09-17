@@ -3,7 +3,7 @@ import type { PluginListenerHandle } from "@capacitor/core";
 export type NativeArBackend = "arkit" | "arcore" | "none";
 
 /** Native world-lock mode. Default plane = Instant Placement / planes. */
-export type NativeArPlacementMode = "plane" | "image";
+export type NativeArPlacementMode = "plane" | "image" | "face";
 
 export interface NativeArSupportResult {
   supported: boolean;
@@ -21,7 +21,8 @@ export interface NativeArStartOptions {
   /**
    * Default `"plane"`. `"image"` tracks the bundled ARCore marker
    * (`markers/deez_image_target.png`, print ~16 cm wide) and parents the model
-   * to that image anchor. Android only in this build.
+   * to that image anchor. `"face"` is ARCore Augmented Faces (front camera,
+   * mesh wireframe + nose marker). Android only in this build.
    */
   placementMode?: NativeArPlacementMode;
   /**

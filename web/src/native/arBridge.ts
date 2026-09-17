@@ -165,7 +165,9 @@ export async function startNativeAr(options?: {
   const asset = options?.asset ?? loadSelectedAsset();
   const placementMode: NativeArPlacementMode = options?.placementMode ?? "plane";
   const imageMode = placementMode === "image";
-  const lightEstimateViz = !imageMode && options?.lightEstimateViz === true;
+  const faceMode = placementMode === "face";
+  const lightEstimateViz =
+    !imageMode && !faceMode && options?.lightEstimateViz === true;
   try {
     document.documentElement.classList.add("is-ar-native");
     document.body.classList.add("is-ar-native");
@@ -173,11 +175,13 @@ export async function startNativeAr(options?: {
       modelPath: nativeModelPath(asset),
       reducedMotion: options?.reducedMotion === true,
       featurePointHud:
-        imageMode || lightEstimateViz
+        imageMode || faceMode || lightEstimateViz
           ? false
           : (options?.featurePointHud ?? true),
       depthPeek:
-        imageMode || lightEstimateViz ? false : (options?.depthPeek ?? true),
+        imageMode || faceMode || lightEstimateViz
+          ? false
+          : (options?.depthPeek ?? true),
       placementMode,
       lightEstimateViz,
     });

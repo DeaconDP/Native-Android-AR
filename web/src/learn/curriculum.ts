@@ -448,8 +448,9 @@ export const LEARN_TOPICS: LearnTopic[] = [
     id: "kind-face",
     section: "kinds",
     title: "Face / body tracking",
-    summary: "Mesh or landmarks on a face or body — separate mode, not floor place.",
-    status: "roadmap",
+    summary:
+      "Android live: front-camera face mesh peek — separate from the floor lab.",
+    status: "live",
     sections: [
       {
         heading: "What it is",
@@ -459,9 +460,11 @@ export const LEARN_TOPICS: LearnTopic[] = [
         ],
       },
       {
-        heading: "In this app",
+        heading: "Try it",
         paragraphs: [
-          "Roadmapped as an optional face-mesh peek (iOS ARKit first). Not part of the default place-on-floor lesson.",
+          "On the Capacitor Android app, open How it works → Face / body tracking → Try in AR. That starts a separate native session (placementMode: face) on the front camera — not the floor-plane lab. Home Start AR still opens Instant Placement / planes.",
+          "Face the front camera. When ARCore locks a face, a cyan wireframe of the 3D mesh plus orange landmark dots appear, and a small marker sits on the nose tip. Feature-point HUD, depth peek, Instant Placement, and plane finding stay off so the face lesson stays clear. Rotate and floor-move are no-ops; the face is the pose.",
+          "Browser, WebXR, and iOS do not run this demo yet. Try in AR on those surfaces explains that you need the Android app. iOS ARKit face anchors are deferred. This is a teaching peek, not a beauty filter.",
         ],
       },
     ],
@@ -678,7 +681,7 @@ export type CoachMilestone = "scan" | "ready" | "placed" | "gesture" | "orbit";
 export function coachForMilestone(
   mode: string,
   milestone: CoachMilestone,
-  placement: "plane" | "image" = "plane",
+  placement: "plane" | "image" | "face" = "plane",
   lightEstimateViz = false,
 ): { text: string; topicId: LearnTopicId } {
   if (mode === "orbit" || milestone === "orbit") {
@@ -686,6 +689,35 @@ export function coachForMilestone(
       text: "Drag to rotate · pinch to scale — orbit (no world anchors) · Learn: orbit-control",
       topicId: "orbit-control",
     };
+  }
+  if (placement === "face") {
+    switch (milestone) {
+      case "scan":
+        return {
+          text: "Face the front camera · Learn: kind-face",
+          topicId: "kind-face",
+        };
+      case "ready":
+        return {
+          text: "Face locked · Learn: kind-face",
+          topicId: "kind-face",
+        };
+      case "placed":
+        return {
+          text: "Face locked — mesh on you · Learn: kind-face",
+          topicId: "kind-face",
+        };
+      case "gesture":
+        return {
+          text: "Open Learn — face vs plane tracking · Learn: kind-face",
+          topicId: "kind-face",
+        };
+      default:
+        return {
+          text: "Face the front camera · Learn: kind-face",
+          topicId: "kind-face",
+        };
+    }
   }
   if (placement === "image") {
     switch (milestone) {

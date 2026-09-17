@@ -87,6 +87,16 @@ for (const mode of MODES) {
   }
 }
 
+for (const milestone of MILESTONES) {
+  if (milestone === "orbit") continue;
+  const { topicId } = coachForMilestone("native", milestone, "face");
+  if (topicId !== "kind-face") {
+    fail(
+      `coachForMilestone(native, ${milestone}, face) → "${topicId}" expected kind-face`,
+    );
+  }
+}
+
 for (const status of STATUSES) {
   if (!LEARN_TOPICS.some((t) => t.status === status)) {
     fail(`no topic with status "${status}"`);

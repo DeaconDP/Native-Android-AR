@@ -107,11 +107,17 @@ async function startSession(
   const nativePlacementMode: NativeArPlacementMode =
     options?.nativePlacementMode ?? "plane";
   const lightEstimateViz =
-    options?.lightEstimateViz === true && nativePlacementMode !== "image";
+    options?.lightEstimateViz === true && nativePlacementMode === "plane";
 
   if (nativePlacementMode === "image" && mode !== "native") {
     throw new Error(
       "Image-target placement needs the Capacitor Android app with ARCore.",
+    );
+  }
+
+  if (nativePlacementMode === "face" && (!isCapacitorAndroid() || mode !== "native")) {
+    throw new Error(
+      "Face-mesh peek needs the Capacitor Android app with ARCore.",
     );
   }
 
@@ -397,19 +403,24 @@ export function bindStoreActions(
         const topicId = store.learnTopicId;
         const markerDemo = topicId === "kind-marker";
         const lightDemo = topicId === "kind-light";
-        if (markerDemo || lightDemo) {
+        const faceDemo = topicId === "kind-face";
+        if (markerDemo || lightDemo || faceDemo) {
           const androidNative =
             isCapacitorAndroid() && (await isNativeArSupported());
           if (!androidNative) {
             store.patch({
               showLearn: false,
               learnTopicId: null,
-              gateTitle: lightDemo
-                ? "Light demo needs Android"
-                : "Marker demo needs Android",
-              gateBody: lightDemo
-                ? "Light-estimate readout uses ARCore ambient intensity in the Capacitor Android app. Open How it works → Light estimation & shadows → Try in AR from the installed app — not the browser, WebXR, or iOS in this build. Home Start AR still uses a fixed Filament light."
-                : "Image-target placement uses ARCore Augmented Images in the Capacitor Android app. Print /markers/deez_image_target.png about 16 cm (6 in) wide on matte paper, then Try in AR from the installed app — not the browser, WebXR, or iOS in this build.",
+              gateTitle: faceDemo
+                ? "Face demo needs Android"
+                : lightDemo
+                  ? "Light demo needs Android"
+                  : "Marker demo needs Android",
+              gateBody: faceDemo
+                ? "Face-mesh peek uses ARCore Augmented Faces (front camera) in the Capacitor Android app. Open How it works → Face / body tracking → Try in AR from the installed app — not the browser, WebXR, or iOS in this build. Home Start AR still opens Instant Placement / planes."
+                : lightDemo
+                  ? "Light-estimate readout uses ARCore ambient intensity in the Capacitor Android app. Open How it works → Light estimation & shadows → Try in AR from the installed app — not the browser, WebXR, or iOS in this build. Home Start AR still uses a fixed Filament light."
+                  : "Image-target placement uses ARCore Augmented Images in the Capacitor Android app. Print /markers/deez_image_target.png about 16 cm (6 in) wide on matte paper, then Try in AR from the installed app — not the browser, WebXR, or iOS in this build.",
               gateActionLabel: "Start AR",
               gateError: false,
             });
@@ -425,7 +436,11 @@ export function bindStoreActions(
           store.patch({ isStarting: true });
           try {
             const controller = await startSession(store, uiRoot, {
-              nativePlacementMode: markerDemo ? "image" : "plane",
+              nativePlacementMode: faceDemo
+                ? "face"
+                : markerDemo
+                  ? "image"
+                  : "plane",
               lightEstimateViz: lightDemo,
             });
             setController(controller);

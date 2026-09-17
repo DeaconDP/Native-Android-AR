@@ -83,6 +83,8 @@ export function mountSessionGestures(
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
     .matches;
   const imageMode = nativePlacement === "image";
+  const faceMode = nativePlacement === "face";
+  const lockedPose = imageMode || faceMode;
 
   let placed = mode === "orbit";
   let surfaceReady = mode === "orbit";
@@ -260,11 +262,13 @@ export function mountSessionGestures(
           else if (centroidTravel > 14) twoFingerMode = "pan";
         }
         if (twoFingerMode === "pinch") {
-          pendingScale = clampScale(pinch.startScale * distRatio);
-          scheduleFlush();
+          if (!faceMode) {
+            pendingScale = clampScale(pinch.startScale * distRatio);
+            scheduleFlush();
+          }
         } else if (twoFingerMode === "pan" && lastCentroid) {
-          if (imageMode) {
-            /* Pose is the printed marker. */
+          if (lockedPose) {
+            /* Pose is the printed marker or the tracked face. */
           } else if (cameraAr) applyMoveScreen(c.x, c.y);
           else backends.orbit?.pan(cdx, cdy);
         }
@@ -309,9 +313,9 @@ export function mountSessionGestures(
 
     if (!placed && cameraAr) {
       const travel = Math.hypot(ptr.x - ptr.startX, ptr.y - ptr.startY);
-      if (travel <= TAP_SLOP && surfaceReady) {
-        if (imageMode) {
-          // Auto-places when ARCore locks the marker.
+        if (travel <= TAP_SLOP && surfaceReady) {
+        if (lockedPose) {
+          // Auto-places when ARCore locks the marker or face.
           return;
         }
         void (async () => {
@@ -343,7 +347,7 @@ export function mountSessionGestures(
   };
 
   const onWheel = (e: WheelEvent) => {
-    if (!placed || spawning) return;
+    if (!placed || spawning || faceMode) return;
     e.preventDefault();
     applyScale(scale * (e.deltaY > 0 ? 0.94 : 1.06));
     backends.orbit?.noteInteracted();
